@@ -578,9 +578,11 @@ header h1{font-size:1.4rem;font-weight:900;text-align:center;flex:1;}
       <div class="card">
         <div class="card-title">💾 גיבוי ושחזור</div>
         <div style="display:flex;flex-direction:column;gap:8px;">
-          <button class="btn bg bsm" onclick="backupData()">⬇️ הורד גיבוי (JSON)</button>
-          <div class="ff" style="margin-bottom:0;"><label>שחזר מגיבוי</label><input type="file" id="restore-file" accept=".json" onchange="restoreData(event)"/></div>
+          <button class="btn bg bsm" onclick="backupData()">⬇️ הורד גיבוי ידני (JSON)</button>
+          <button class="btn bb bsm" onclick="showBackupsModal()">📂 גיבויים אוטומטיים (עד 30 יום)</button>
+          <div class="ff" style="margin-bottom:0;"><label>שחזר מקובץ JSON</label><input type="file" id="restore-file" accept=".json" onchange="restoreData(event)"/></div>
         </div>
+        <div style="font-size:.7rem;color:var(--text-light);margin-top:8px;line-height:1.5;">🔄 גיבוי אוטומטי נשמר כל יום — מקומי + Firebase</div>
       </div>
       <div class="card" id="sub-settings-card" style="display:none;">
         <div class="card-title">💳 המנוי שלי</div>
@@ -857,8 +859,120 @@ function syncToday(){
   if(tc>0||S.water>0)S.historyData[k]={cal:tc,prot:tp,water:S.water,foods:allF.length,meals:JSON.parse(JSON.stringify(S.meals)),mood:S.mood};
   saveAll();
 }
-function backupData(){const blob=new Blob([JSON.stringify(S,null,2)],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=`tzuna-backup-${todayKey()}.json`;a.click();toast('גיבוי הורד ✅','success');}
-function restoreData(evt){const file=evt.target.files[0];if(!file)return;const reader=new FileReader();reader.onload=e=>{try{const d=JSON.parse(e.target.result);S={...DEFAULT_STATE,...d};saveAll();loadAll();uhome();rfood();rsettings();toast('שחזור הושלם ✅','success');}catch{toast('קובץ לא תקין ❌','');}};reader.readAsText(file);}
+function backupData(){
+  const name=`tzuna_${todayKey()}`;
+  const blob=new Blob([JSON.stringify(S,null,2)],{type:'application/json'});
+  const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=`${name}.json`;a.click();
+  toast('גיבוי הורד ✅','success');
+}
+function restoreData(evt){
+  const file=evt.target.files[0];if(!file)return;
+  const reader=new FileReader();
+  reader.onload=e=>{
+    try{const d=JSON.parse(e.target.result);S={...DEFAULT_STATE,...d};saveAll();loadAll();uhome();rfood();rsettings();toast('שחזור הושלם ✅','success');}
+    catch{toast('קובץ לא תקין ❌','');}
+  };
+  reader.readAsText(file);
+}
+
+// ══════ גיבוי אוטומטי יומי (localStorage + Firestore) ══════
+const BACKUP_KEY='tzuna_backups';
+const MAX_BACKUPS=30;
+
+async function runDailyBackup(){
+  const today=todayKey();
+  const lastBackup=localStorage.getItem('tzuna_last_backup');
+  if(lastBackup===today)return; // כבר גיבינו היום
+  await saveBackup(today);
+  localStorage.setItem('tzuna_last_backup',today);
+}
+
+async function saveBackup(dateKey){
+  try{
+    // טען גיבויים קיימים מ-localStorage
+    let backups=JSON.parse(localStorage.getItem(BACKUP_KEY)||'{}');
+    const keys=Object.keys(backups).sort();
+    // מחק גיבויים ישנים אם יש יותר מ-30
+    while(keys.length>=MAX_BACKUPS){
+      const oldest=keys.shift();
+      delete backups[oldest];
+    }
+    // הוסף גיבוי חדש
+    backups[dateKey]=JSON.parse(JSON.stringify(S));
+    localStorage.setItem(BACKUP_KEY,JSON.stringify(backups));
+
+    // שמור גם ב-Firestore
+    if(db&&currentUser){
+      const ref=db.collection('tenants').doc(currentUser.uid).collection('backups').doc(`tzuna_${dateKey}`);
+      await ref.set({data:JSON.parse(JSON.stringify(S)),createdAt:firebase.firestore.FieldValue.serverTimestamp()});
+      // נקה גיבויים ישנים מ-Firestore
+      const snap=await db.collection('tenants').doc(currentUser.uid).collection('backups').orderBy('createdAt','asc').get();
+      if(snap.docs.length>MAX_BACKUPS){
+        const toDelete=snap.docs.slice(0,snap.docs.length-MAX_BACKUPS);
+        const batch=db.batch();toDelete.forEach(d=>batch.delete(d.ref));
+        await batch.commit();
+      }
+    }
+    console.log(`✅ גיבוי יומי נשמר: tzuna_${dateKey}`);
+  }catch(e){console.warn('שגיאה בגיבוי אוטומטי:',e);}
+}
+
+function getLocalBackups(){
+  try{return JSON.parse(localStorage.getItem(BACKUP_KEY)||'{}');}
+  catch{return {};}
+}
+
+async function showBackupsModal(){
+  const backups=getLocalBackups();
+  const keys=Object.keys(backups).sort().reverse();
+  let fsBackups=[];
+  if(db&&currentUser){
+    try{
+      const snap=await db.collection('tenants').doc(currentUser.uid).collection('backups').orderBy('createdAt','desc').limit(30).get();
+      fsBackups=snap.docs.map(d=>d.id.replace('tzuna_',''));
+    }catch{}
+  }
+  const allKeys=[...new Set([...keys,...fsBackups])].sort().reverse();
+  if(!allKeys.length){toast('אין גיבויים שמורים','');return;}
+
+  const existing=document.getElementById('backups-modal');if(existing)existing.remove();
+  const modal=document.createElement('div');
+  modal.id='backups-modal';
+  modal.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:400;display:flex;align-items:center;justify-content:center;padding:16px;';
+  modal.innerHTML=`<div style="background:white;border-radius:20px;padding:22px;width:100%;max-width:360px;max-height:80vh;overflow-y:auto;">
+    <h2 style="font-size:1.1rem;font-weight:900;margin-bottom:4px;">💾 גיבויים שמורים</h2>
+    <p style="font-size:.75rem;color:var(--text-light);margin-bottom:14px;">לחץ על גיבוי לשחזור</p>
+    ${allKeys.map(k=>{
+      const inLocal=!!backups[k];const inFS=fsBackups.includes(k);
+      return`<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 12px;background:#fafafa;border-radius:10px;margin-bottom:6px;border:1px solid var(--border);">
+        <div>
+          <div style="font-size:.84rem;font-weight:700;">tzuna_${k}</div>
+          <div style="font-size:.68rem;color:var(--text-light);">${inLocal?'💻 מקומי ':''}${inFS?'☁️ Firebase ':''}</div>
+        </div>
+        <button onclick="restoreBackup('${k}')" style="background:var(--green);color:white;border:none;border-radius:8px;padding:6px 12px;font-family:Heebo,sans-serif;font-size:.75rem;font-weight:700;cursor:pointer;">שחזר</button>
+      </div>`;
+    }).join('')}
+    <button onclick="document.getElementById('backups-modal').remove()" style="width:100%;margin-top:8px;padding:10px;border:2px solid var(--green);border-radius:10px;background:white;color:var(--green-dark);font-family:Heebo,sans-serif;font-weight:700;cursor:pointer;">סגור</button>
+  </div>`;
+  document.body.appendChild(modal);
+}
+
+async function restoreBackup(dateKey){
+  if(!confirm(`לשחזר גיבוי מתאריך ${fmtFull(dateKey)}?\nהנתונים הנוכחיים יוחלפו.`))return;
+  const backups=getLocalBackups();
+  let data=backups[dateKey];
+  if(!data&&db&&currentUser){
+    try{
+      const doc=await db.collection('tenants').doc(currentUser.uid).collection('backups').doc(`tzuna_${dateKey}`).get();
+      if(doc.exists)data=doc.data().data;
+    }catch{}
+  }
+  if(!data){toast('לא נמצא גיבוי','');return;}
+  S={...DEFAULT_STATE,...data};
+  saveAll();loadAll();uhome();rfood();rsettings();
+  document.getElementById('backups-modal')?.remove();
+  toast(`✅ שוחזר גיבוי מ-${fmtFull(dateKey)}`,'success');
+}
 function toast(msg,type=''){const el=document.createElement('div');el.className='toast '+(type||'');el.textContent=msg;document.body.appendChild(el);setTimeout(()=>{el.style.opacity='0';el.style.transition='opacity .4s';setTimeout(()=>el.remove(),400);},2800);}
 function obG(g){S.gender=g;document.getElementById('ob-male').classList.toggle('act',g==='male');document.getElementById('ob-female').classList.toggle('act',g==='female');}
 function finishOB(){const n=document.getElementById('ob-name').value.trim();if(n)S.name=n;document.getElementById('onboarding').style.display='none';saveAll();uhome();rsettings();const f=S.gender==='female';toast(`ברוכ${f?'ה':''} הב${f?'א':'א'}, ${S.name||'חבר'}! 🎉`,'success');}
@@ -1151,16 +1265,116 @@ function doExport(){
   const keys=Object.keys(S.historyData).filter(k=>k>=from&&k<=to).sort();
   if(!keys.length){toast('אין נתונים בטווח זה','');return;}
   if(expFmt2==='excel'&&typeof XLSX!=='undefined'){
-    const rows=[['תאריך','קלוריות','חלבון (g)','מים (כוסות)','מצב רוח','פריטים']];
-    keys.forEach(k=>{const d=S.historyData[k];rows.push([k,d.cal||0,d.prot||0,d.water||0,d.mood||'',d.foods||0]);});
-    const ws=XLSX.utils.aoa_to_sheet(rows);const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,'תזונה');XLSX.writeFile(wb,`tzuna-${from}-${to}.xlsx`);
-  }else{
-    let txt=`דוח תזונה ${from} עד ${to}\n${'='.repeat(40)}\n`;
-    keys.forEach(k=>{const d=S.historyData[k];txt+=`\n📅 ${k}\n  קלוריות: ${d.cal||0} | חלבון: ${d.prot||0}g | מים: ${d.water||0}\n`;});
-    const blob=new Blob([txt],{type:'text/plain;charset=utf-8'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=`tzuna-${from}-${to}.txt`;a.click();
+    // Excel: סיכום + ארוחות מפורטות
+    const wb=XLSX.utils.book_new();
+    // גיליון 1 - סיכום יומי
+    const sum=[['תאריך','קלוריות','חלבון (g)','מים (כוסות)','מצב רוח','מספר פריטים']];
+    keys.forEach(k=>{const d=S.historyData[k];sum.push([k,d.cal||0,d.prot||0,d.water||0,d.mood||'',d.foods||0]);});
+    XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(sum),'סיכום יומי');
+    // גיליון 2 - ארוחות מפורטות
+    const meals=[['תאריך','ארוחה','שם מנה','קלוריות','חלבון (g)']];
+    const mealNames={breakfast:'בוקר',lunch:'צהריים',dinner:'ערב',snacks:'נשנושים'};
+    keys.forEach(k=>{
+      const d=S.historyData[k];if(!d.meals)return;
+      Object.entries(d.meals).forEach(([meal,items])=>{
+        (items||[]).forEach(f=>{meals.push([k,mealNames[meal]||meal,f.name,f.cal||0,f.prot||0]);});
+      });
+    });
+    XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(meals),'ארוחות מפורטות');
+    XLSX.writeFile(wb,`tzuna_${from}_${to}.xlsx`);
+  } else {
+    // PDF - בנה HTML ועשה print
+    exportPDF(keys,from,to);return;
   }
   closeExport();toast('ייצוא הושלם ✅','success');
 }
+
+function exportPDF(keys,from,to){
+  const mealNames={breakfast:'🌅 ארוחת בוקר',lunch:'☀️ ארוחת צהריים',dinner:'🌙 ארוחת ערב',snacks:'🍎 נשנושים'};
+  const userName=S.name||'משתמש';
+  const totalCal=keys.reduce((a,k)=>a+(S.historyData[k]?.cal||0),0);
+  const avgCal=keys.length?Math.round(totalCal/keys.length):0;
+
+  let daysHtml='';
+  keys.forEach(k=>{
+    const d=S.historyData[k];
+    let mealsHtml='';
+    if(d.meals){
+      Object.entries(d.meals).forEach(([meal,items])=>{
+        if(!items||!items.length)return;
+        const mCal=items.reduce((a,f)=>a+f.cal,0);
+        const mProt=items.reduce((a,f)=>a+(f.prot||0),0);
+        mealsHtml+=`<div class="meal-block">
+          <div class="meal-title">${mealNames[meal]||meal} — ${mCal} קל׳ · ${mProt}g חלבון</div>
+          <ul>${items.map(f=>`<li>${f.name} — <strong>${f.cal} קל׳</strong>${f.prot?` · ${f.prot}g חלבון`:''}</li>`).join('')}</ul>
+        </div>`;
+      });
+    }
+    daysHtml+=`<div class="day-block">
+      <div class="day-header">
+        <span class="day-date">${fmtFull(k)}</span>
+        <span class="day-totals">🔥 ${d.cal||0} קל׳ &nbsp;|&nbsp; 💪 ${d.prot||0}g &nbsp;|&nbsp; 💧 ${d.water||0} כוסות${d.mood?` &nbsp;|&nbsp; ${d.mood}`:''}</span>
+      </div>
+      ${mealsHtml||'<p class="no-data">לא נרשמו ארוחות</p>'}
+    </div>`;
+  });
+
+  const html=`<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<title>דוח תזונה — ${userName} — ${from} עד ${to}</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Heebo:wght@400;600;700;900&display=swap');
+  *{box-sizing:border-box;margin:0;padding:0;}
+  body{font-family:'Heebo',sans-serif;direction:rtl;color:#2c3e50;background:white;padding:32px;font-size:13px;}
+  .report-header{background:linear-gradient(135deg,#27ae60,#1abc9c);color:white;border-radius:16px;padding:24px 28px;margin-bottom:28px;display:flex;justify-content:space-between;align-items:center;}
+  .report-header h1{font-size:22px;font-weight:900;}
+  .report-header .meta{font-size:12px;opacity:.9;margin-top:4px;}
+  .report-header .stats{text-align:left;background:rgba(255,255,255,.2);border-radius:10px;padding:10px 16px;}
+  .report-header .stats div{font-size:11px;opacity:.9;}
+  .report-header .stats strong{font-size:18px;font-weight:900;display:block;}
+  .day-block{border:1px solid #e8e8e8;border-radius:12px;margin-bottom:16px;overflow:hidden;page-break-inside:avoid;}
+  .day-header{background:#f8faf9;padding:10px 16px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #e8e8e8;}
+  .day-date{font-size:14px;font-weight:700;color:#27ae60;}
+  .day-totals{font-size:11px;color:#7f8c8d;}
+  .meal-block{padding:10px 16px;border-bottom:1px dashed #f0f0f0;}
+  .meal-block:last-child{border-bottom:none;}
+  .meal-title{font-size:12px;font-weight:700;color:#555;margin-bottom:5px;}
+  ul{padding-right:16px;}
+  ul li{font-size:12px;color:#2c3e50;margin-bottom:2px;line-height:1.5;}
+  .no-data{padding:8px 16px;font-size:11px;color:#aaa;font-style:italic;}
+  .footer{margin-top:28px;text-align:center;font-size:10px;color:#aaa;border-top:1px solid #eee;padding-top:12px;}
+  @media print{body{padding:16px;}.report-header{-webkit-print-color-adjust:exact;print-color-adjust:exact;}.day-block{break-inside:avoid;}}
+</style>
+</head>
+<body>
+<div class="report-header">
+  <div>
+    <h1>🥗 דוח תזונה</h1>
+    <div class="meta">👤 ${userName} &nbsp;|&nbsp; 📅 ${fmtFull(from)} — ${fmtFull(to)}</div>
+    <div class="meta" style="margin-top:4px;">🎯 יעד: ${S.calGoal} קל׳ ביום &nbsp;|&nbsp; מטרה: ${S.goal==='lose'?'ירידה':S.goal==='gain'?'עלייה':'שמירה'}</div>
+  </div>
+  <div class="stats">
+    <div>ממוצע יומי</div>
+    <strong>${avgCal}</strong>
+    <div>קל׳ ליום</div>
+    <div style="margin-top:6px;">${keys.length} ימים</div>
+  </div>
+</div>
+${daysHtml}
+<div class="footer">נוצר על ידי אפליקציית תזונה 🥗 &nbsp;|&nbsp; ${new Date().toLocaleDateString('he-IL')}</div>
+</body>
+</html>`;
+
+  const win=window.open('','_blank');
+  win.document.write(html);
+  win.document.close();
+  win.focus();
+  setTimeout(()=>win.print(),800);
+  closeExport();toast('הדוח נפתח — לחץ הדפס לשמירה כ-PDF ✅','success');
+}
+
 let menuPrefs=[];
 function setMenuMode(m){document.getElementById('mode-weekly').classList.toggle('act',m==='weekly');document.getElementById('mode-fridge').classList.toggle('act',m==='fridge');document.getElementById('panel-weekly').style.display=m==='weekly'?'block':'none';document.getElementById('panel-fridge').style.display=m==='fridge'?'block':'none';}
 function togglePref(btn,pref){if(menuPrefs.includes(pref)){menuPrefs=menuPrefs.filter(p=>p!==pref);btn.classList.remove('on');}else{menuPrefs.push(pref);btn.classList.add('on');}}
@@ -1275,6 +1489,7 @@ function startupUI(){
   if(S.name){uhome();rfood();rsettings();}
   else setTimeout(()=>{document.getElementById('onboarding').style.display='flex';},400);
   if(S.reminderMinutes>0)setReminder(S.reminderMinutes);
+  setTimeout(runDailyBackup,5000); // גיבוי אוטומטי אחרי 5 שניות
 }
 document.addEventListener('DOMContentLoaded',()=>{
   document.getElementById('ver-badge').textContent='v'+VERSION;
