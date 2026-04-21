@@ -13,6 +13,7 @@
 <link id="favicon-32" rel="icon" type="image/png" sizes="32x32">
 <link href="https://fonts.googleapis.com/css2?family=Heebo:wght@300;400;500;700;900&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
@@ -303,7 +304,7 @@ header h1{font-size:1.4rem;font-weight:900;text-align:center;flex:1;}
 <div class="app-shell">
   <div id="sub-status-bar" onclick="showPaywall()"></div>
   <header>
-    <span class="ver-badge" id="ver-badge">v2.4</span>
+    <span class="ver-badge" id="ver-badge">v2.5</span>
     <h1>🥗 תזונה</h1>
     <div style="position:relative;flex-shrink:0;">
       <button class="date-btn" id="date-btn">טוען...</button>
@@ -634,7 +635,7 @@ const LEMON_CHECKOUT_MONTHLY  = "https://dimitryu.lemonsqueezy.com/buy/c31f04e4-
 const LEMON_CHECKOUT_LIFETIME = "https://dimitryu.lemonsqueezy.com/buy/936a8d16-362b-4dae-b217-0113a9c974b9";
 // ──────────────────────────────────────────────────────
 
-const VERSION='2.4';
+const VERSION='2.5';
 const STORAGE_KEY='tzuna_v15';
 const LEGACY_KEYS=['tzuna_v14','tzuna_v13','tz6','tz5'];
 const QUOTES=[
@@ -705,7 +706,11 @@ async function signInWithGoogle(){
   try{await fbAuth.signInWithPopup(p);}
   catch(e){if(e.code!=='auth/popup-closed-by-user')toast('שגיאה: '+e.message,'');}
 }
-function signOutUser(){if(!confirm('להתנתק?'))return;fbAuth?.signOut();}
+function signOutUser(){
+  if(!confirm('להתנתק?'))return;
+  if(firestoreUnsubscribe){firestoreUnsubscribe();firestoreUnsubscribe=null;}
+  fbAuth?.signOut();
+}
 async function getSubscription(uid){
   if(!db)return null;
   try{const d=await db.collection('tenants').doc(uid).collection('subscription').doc('current').get();return d.exists?d.data():null;}
@@ -790,24 +795,68 @@ async function checkPayNow(){
   if(isSubActive(sub)){startApp();toast('✅ תשלום אושר! ברוך הבא Premium 🎉','success');loadFromFirestore(currentUser.uid);showSubSettingsCard(sub);}
   else toast('⏳ עדיין מעובד — נסה שוב בעוד דקה','warn');
 }
+let firestoreUnsubscribe=null; // real-time listener
+
 async function loadFromFirestore(uid){
   if(!db){loadAll();startupUI();return;}
+
+  // נתק listener קודם אם קיים
+  if(firestoreUnsubscribe){firestoreUnsubscribe();firestoreUnsubscribe=null;}
+
+  // טעינה ראשונית
   try{
     const doc=await db.collection('tenants').doc(uid).collection('appdata').doc('main').get();
     if(doc.exists){
-      S={...DEFAULT_STATE,...doc.data()};
+      const data=doc.data();
+      S={...DEFAULT_STATE,...data};
       if(!S.meals)S.meals={breakfast:[],lunch:[],dinner:[],snacks:[]};
-      if(!S.historyData)S.historyData={};if(!S.calcSaved)S.calcSaved={};
+      if(!S.historyData)S.historyData={};
+      if(!S.calcSaved)S.calcSaved={};
       try{localStorage.setItem(STORAGE_KEY,JSON.stringify(S));}catch{}
-    }else{loadAll();saveUserProfile(uid);}
+    }else{
+      loadAll();
+      saveUserProfile(uid);
+      // שמור לFirestore את הנתונים המקומיים
+      await saveToFirestore();
+    }
   }catch{loadAll();}
+
   startupUI();
   if(!S.name)setTimeout(()=>{document.getElementById('onboarding').style.display='flex';},400);
+
+  // הפעל real-time listener לסנכרון בין מכשירים
+  startRealtimeSync(uid);
 }
+
+function startRealtimeSync(uid){
+  if(!db)return;
+  firestoreUnsubscribe=db.collection('tenants').doc(uid).collection('appdata').doc('main')
+    .onSnapshot(doc=>{
+      if(!doc.exists||!doc.metadata.hasPendingWrites===false)return;
+      // עדכון הגיע ממכשיר אחר (לא מהמכשיר הנוכחי)
+      if(doc.metadata.fromCache)return;
+      const remote=doc.data();
+      if(!remote)return;
+      // מיזוג: שמור historyData של שני המכשירים
+      const mergedHistory={...remote.historyData,...S.historyData};
+      // העדף נתונים מ-Firestore לשדות רגילים, מיזוג historyData
+      S={...DEFAULT_STATE,...remote,historyData:mergedHistory};
+      if(!S.meals)S.meals={breakfast:[],lunch:[],dinner:[],snacks:[]};
+      try{localStorage.setItem(STORAGE_KEY,JSON.stringify(S));}catch{}
+      // רענן UI בשקט
+      uhome();rfood();rsettings();
+      console.log('🔄 סנכרון ממכשיר אחר');
+    },err=>console.warn('Sync error:',err));
+}
+
 async function saveToFirestore(){
   if(!db||!currentUser)return;
-  try{await db.collection('tenants').doc(currentUser.uid).collection('appdata').doc('main').set(JSON.parse(JSON.stringify(S)),{merge:true});}
-  catch(e){console.warn('FS save:',e);}
+  try{
+    // set ללא merge — מחליף הכל לסנכרון מלא
+    await db.collection('tenants').doc(currentUser.uid)
+      .collection('appdata').doc('main')
+      .set({...JSON.parse(JSON.stringify(S)),updatedAt:firebase.firestore.FieldValue.serverTimestamp()});
+  }catch(e){console.warn('FS save:',e);}
 }
 async function saveUserProfile(uid){
   if(!db||!currentUser)return;
@@ -1290,89 +1339,65 @@ function doExport(){
 }
 
 function exportPDF(keys,from,to){
-  const mealNames={breakfast:'🌅 ארוחת בוקר',lunch:'☀️ ארוחת צהריים',dinner:'🌙 ארוחת ערב',snacks:'🍎 נשנושים'};
+  if(typeof window.jspdf==='undefined'){
+    toast('טוען PDF... נסה שוב בעוד שנייה','');return;
+  }
+  const{jsPDF}=window.jspdf;
+  const doc=new jsPDF({orientation:'portrait',unit:'mm',format:'a4'});
+  const mealNames={breakfast:'בוקר',lunch:'צהריים',dinner:'ערב',snacks:'נשנושים'};
   const userName=S.name||'משתמש';
   const totalCal=keys.reduce((a,k)=>a+(S.historyData[k]?.cal||0),0);
   const avgCal=keys.length?Math.round(totalCal/keys.length):0;
+  const pageW=210,margin=14;
+  let y=14;
 
-  let daysHtml='';
+  // header ירוק
+  doc.setFillColor(39,174,96);doc.roundedRect(margin,y,pageW-margin*2,24,3,3,'F');
+  doc.setTextColor(255,255,255);doc.setFontSize(16);doc.setFont('helvetica','bold');
+  doc.text('Tzuna - Nutrition Report',pageW/2,y+9,{align:'center'});
+  doc.setFontSize(9);doc.setFont('helvetica','normal');
+  doc.text(`${userName}  |  ${from} to ${to}  |  Avg: ${avgCal} cal/day`,pageW/2,y+18,{align:'center'});
+  y+=30;
+
   keys.forEach(k=>{
     const d=S.historyData[k];
-    let mealsHtml='';
+    const dayH=18;
+    if(y+dayH>280){doc.addPage();y=14;}
+
+    // רקע יום
+    doc.setFillColor(248,250,249);doc.roundedRect(margin,y,pageW-margin*2,10,2,2,'F');
+    doc.setDrawColor(39,174,96);doc.roundedRect(margin,y,pageW-margin*2,10,2,2,'S');
+    doc.setTextColor(39,174,96);doc.setFontSize(10);doc.setFont('helvetica','bold');
+    doc.text(fmtFull(k),margin+3,y+7);
+    doc.setTextColor(100,100,100);doc.setFontSize(8);doc.setFont('helvetica','normal');
+    doc.text(`Cal: ${d.cal||0}  Protein: ${d.prot||0}g  Water: ${d.water||0}  ${d.mood||''}`,pageW-margin-3,y+7,{align:'right'});
+    y+=12;
+
+    // ארוחות
     if(d.meals){
       Object.entries(d.meals).forEach(([meal,items])=>{
         if(!items||!items.length)return;
+        if(y>276){doc.addPage();y=14;}
+        doc.setTextColor(80,80,80);doc.setFontSize(8);doc.setFont('helvetica','bold');
         const mCal=items.reduce((a,f)=>a+f.cal,0);
-        const mProt=items.reduce((a,f)=>a+(f.prot||0),0);
-        mealsHtml+=`<div class="meal-block">
-          <div class="meal-title">${mealNames[meal]||meal} — ${mCal} קל׳ · ${mProt}g חלבון</div>
-          <ul>${items.map(f=>`<li>${f.name} — <strong>${f.cal} קל׳</strong>${f.prot?` · ${f.prot}g חלבון`:''}</li>`).join('')}</ul>
-        </div>`;
+        doc.text(`  ${mealNames[meal]||meal} (${mCal} cal):`,margin+2,y);y+=4;
+        items.forEach(f=>{
+          if(y>276){doc.addPage();y=14;}
+          doc.setFont('helvetica','normal');doc.setTextColor(50,50,50);
+          doc.text(`    • ${f.name}  —  ${f.cal} cal${f.prot?`  /  ${f.prot}g protein`:''}`,margin+2,y);
+          y+=4;
+        });
       });
     }
-    daysHtml+=`<div class="day-block">
-      <div class="day-header">
-        <span class="day-date">${fmtFull(k)}</span>
-        <span class="day-totals">🔥 ${d.cal||0} קל׳ &nbsp;|&nbsp; 💪 ${d.prot||0}g &nbsp;|&nbsp; 💧 ${d.water||0} כוסות${d.mood?` &nbsp;|&nbsp; ${d.mood}`:''}</span>
-      </div>
-      ${mealsHtml||'<p class="no-data">לא נרשמו ארוחות</p>'}
-    </div>`;
+    y+=4;
   });
 
-  const html=`<!DOCTYPE html>
-<html lang="he" dir="rtl">
-<head>
-<meta charset="UTF-8">
-<title>דוח תזונה — ${userName} — ${from} עד ${to}</title>
-<style>
-  @import url('https://fonts.googleapis.com/css2?family=Heebo:wght@400;600;700;900&display=swap');
-  *{box-sizing:border-box;margin:0;padding:0;}
-  body{font-family:'Heebo',sans-serif;direction:rtl;color:#2c3e50;background:white;padding:32px;font-size:13px;}
-  .report-header{background:linear-gradient(135deg,#27ae60,#1abc9c);color:white;border-radius:16px;padding:24px 28px;margin-bottom:28px;display:flex;justify-content:space-between;align-items:center;}
-  .report-header h1{font-size:22px;font-weight:900;}
-  .report-header .meta{font-size:12px;opacity:.9;margin-top:4px;}
-  .report-header .stats{text-align:left;background:rgba(255,255,255,.2);border-radius:10px;padding:10px 16px;}
-  .report-header .stats div{font-size:11px;opacity:.9;}
-  .report-header .stats strong{font-size:18px;font-weight:900;display:block;}
-  .day-block{border:1px solid #e8e8e8;border-radius:12px;margin-bottom:16px;overflow:hidden;page-break-inside:avoid;}
-  .day-header{background:#f8faf9;padding:10px 16px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #e8e8e8;}
-  .day-date{font-size:14px;font-weight:700;color:#27ae60;}
-  .day-totals{font-size:11px;color:#7f8c8d;}
-  .meal-block{padding:10px 16px;border-bottom:1px dashed #f0f0f0;}
-  .meal-block:last-child{border-bottom:none;}
-  .meal-title{font-size:12px;font-weight:700;color:#555;margin-bottom:5px;}
-  ul{padding-right:16px;}
-  ul li{font-size:12px;color:#2c3e50;margin-bottom:2px;line-height:1.5;}
-  .no-data{padding:8px 16px;font-size:11px;color:#aaa;font-style:italic;}
-  .footer{margin-top:28px;text-align:center;font-size:10px;color:#aaa;border-top:1px solid #eee;padding-top:12px;}
-  @media print{body{padding:16px;}.report-header{-webkit-print-color-adjust:exact;print-color-adjust:exact;}.day-block{break-inside:avoid;}}
-</style>
-</head>
-<body>
-<div class="report-header">
-  <div>
-    <h1>🥗 דוח תזונה</h1>
-    <div class="meta">👤 ${userName} &nbsp;|&nbsp; 📅 ${fmtFull(from)} — ${fmtFull(to)}</div>
-    <div class="meta" style="margin-top:4px;">🎯 יעד: ${S.calGoal} קל׳ ביום &nbsp;|&nbsp; מטרה: ${S.goal==='lose'?'ירידה':S.goal==='gain'?'עלייה':'שמירה'}</div>
-  </div>
-  <div class="stats">
-    <div>ממוצע יומי</div>
-    <strong>${avgCal}</strong>
-    <div>קל׳ ליום</div>
-    <div style="margin-top:6px;">${keys.length} ימים</div>
-  </div>
-</div>
-${daysHtml}
-<div class="footer">נוצר על ידי אפליקציית תזונה 🥗 &nbsp;|&nbsp; ${new Date().toLocaleDateString('he-IL')}</div>
-</body>
-</html>`;
+  // footer
+  doc.setFontSize(7);doc.setTextColor(160,160,160);
+  doc.text(`Tzuna App | ${new Date().toLocaleDateString()}`,pageW/2,290,{align:'center'});
 
-  const win=window.open('','_blank');
-  win.document.write(html);
-  win.document.close();
-  win.focus();
-  setTimeout(()=>win.print(),800);
-  closeExport();toast('הדוח נפתח — לחץ הדפס לשמירה כ-PDF ✅','success');
+  doc.save(`tzuna_${from}_${to}.pdf`);
+  closeExport();toast('PDF נשמר! ✅','success');
 }
 
 let menuPrefs=[];
