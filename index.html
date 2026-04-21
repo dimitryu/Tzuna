@@ -196,19 +196,6 @@ header h1{font-size:1.4rem;font-weight:900;text-align:center;flex:1;}
 .paywall-footer{text-align:center;font-size:.72rem;color:#7f8c8d;margin-top:10px;padding-bottom:8px;}
 .btn-logout-paywall{background:none;border:none;color:#7f8c8d;font-family:'Heebo',sans-serif;font-size:.78rem;cursor:pointer;margin-top:14px;text-decoration:underline;display:block;margin-left:auto;margin-right:auto;}
 #sub-status-bar{background:linear-gradient(135deg,#e67e22,#d35400);color:white;font-size:.74rem;font-weight:700;text-align:center;padding:5px 10px;display:none;cursor:pointer;flex-shrink:0;}
-#admin-screen{position:fixed;inset:0;z-index:1800;background:#f5f5f5;display:none;flex-direction:column;font-family:'Heebo',sans-serif;overflow-y:auto;}
-.admin-header{background:linear-gradient(135deg,#2c3e50,#34495e);color:white;padding:18px 16px;display:flex;align-items:center;justify-content:space-between;}
-.admin-header h1{font-size:1.15rem;font-weight:900;}
-.btn-close-admin{background:rgba(255,255,255,.2);border:none;color:white;padding:8px 14px;border-radius:8px;cursor:pointer;font-family:'Heebo',sans-serif;font-weight:700;}
-.admin-stats{display:grid;grid-template-columns:1fr 1fr;gap:12px;padding:14px;}
-.admin-stat{background:white;border-radius:14px;padding:16px;text-align:center;box-shadow:0 2px 8px rgba(0,0,0,.06);}
-.admin-stat-num{font-size:1.8rem;font-weight:900;color:#27ae60;}
-.admin-stat-lbl{font-size:.72rem;color:#7f8c8d;margin-top:2px;}
-.admin-table-wrap{padding:0 14px 24px;}
-.admin-table-title{font-size:.85rem;font-weight:700;color:#2c3e50;margin-bottom:10px;}
-.subscriber-row{background:white;border-radius:12px;padding:12px 14px;margin-bottom:8px;box-shadow:0 2px 6px rgba(0,0,0,.05);display:flex;align-items:center;justify-content:space-between;}
-.subscriber-email{font-size:.82rem;font-weight:700;color:#2c3e50;}
-.subscriber-meta{font-size:.7rem;color:#7f8c8d;margin-top:2px;}
 .sub-badge{font-size:.7rem;font-weight:700;padding:3px 10px;border-radius:10px;}
 .sub-badge.active{background:#d5f5e3;color:#27ae60;}
 .sub-badge.trial{background:#fdebd0;color:#e67e22;}
@@ -277,22 +264,7 @@ header h1{font-size:1.4rem;font-weight:900;text-align:center;flex:1;}
   </div>
 </div>
 
-<div id="admin-screen">
-  <div class="admin-header">
-    <div><div style="font-size:.72rem;opacity:.6;margin-bottom:2px;">👑 Admin</div><h1>תזונה — ניהול מנויים</h1></div>
-    <button class="btn-close-admin" onclick="closeAdmin()">✕ סגור</button>
-  </div>
-  <div class="admin-stats">
-    <div class="admin-stat"><div class="admin-stat-num" id="admin-active-count">—</div><div class="admin-stat-lbl">פעילים</div></div>
-    <div class="admin-stat"><div class="admin-stat-num" id="admin-trial-count">—</div><div class="admin-stat-lbl">ניסיון</div></div>
-    <div class="admin-stat"><div class="admin-stat-num" id="admin-monthly-revenue">—</div><div class="admin-stat-lbl">MRR ₪</div></div>
-    <div class="admin-stat"><div class="admin-stat-num" id="admin-total-users">—</div><div class="admin-stat-lbl">סה"כ</div></div>
-  </div>
-  <div class="admin-table-wrap">
-    <div class="admin-table-title">🏷️ מנויים פעילים</div>
-    <div id="admin-subscribers-list"><div style="text-align:center;padding:20px;color:#999;font-size:.85rem;">טוען...</div></div>
-  </div>
-</div>
+
 
 <!-- ONBOARDING -->
 <div class="overlay" id="onboarding" style="display:none;">
@@ -708,7 +680,6 @@ async function handleAuthChange(user){
       if(isInTrial(sub)&&!isSubActive(sub))showTrialBar(trialDaysLeft());
       startApp();
       await loadFromFirestore(user.uid);
-      if(user.uid===ADMIN_UID)addAdminBtn();
       showSubSettingsCard(sub);
     }else{showPaywallScreen(sub);}
   }else{
@@ -808,42 +779,6 @@ async function checkPayNow(){
   const sub=await getSubscription(currentUser.uid);
   if(isSubActive(sub)){startApp();toast('✅ תשלום אושר! ברוך הבא Premium 🎉','success');loadFromFirestore(currentUser.uid);showSubSettingsCard(sub);}
   else toast('⏳ עדיין מעובד — נסה שוב בעוד דקה','warn');
-}
-function addAdminBtn(){
-  if(document.getElementById('admin-nav-btn'))return;
-  const b=document.createElement('button');
-  b.id='admin-nav-btn';b.className='nav-btn';
-  b.innerHTML='<span class="nav-icon">👑</span>מנהל';
-  b.onclick=openAdmin;document.getElementById('bottom-nav').appendChild(b);
-}
-async function openAdmin(){
-  if(!currentUser||currentUser.uid!==ADMIN_UID)return;
-  document.getElementById('admin-screen').style.display='flex';
-  await loadAdminData();
-}
-function closeAdmin(){document.getElementById('admin-screen').style.display='none';}
-async function loadAdminData(){
-  if(!db)return;
-  try{
-    const snap=await db.collectionGroup('subscription').orderBy('updatedAt','desc').limit(200).get();
-    const subs=snap.docs.map(d=>({uid:d.ref.parent.parent.id,...d.data()}));
-    const active=subs.filter(s=>isSubActive(s));
-    const trials=subs.filter(s=>!isSubActive(s));
-    const monthly=active.filter(s=>s.plan==='monthly');
-    const mp=parseInt(PRICE_MONTHLY.replace(/[^\d]/g,''))||29;
-    document.getElementById('admin-active-count').textContent=active.length;
-    document.getElementById('admin-trial-count').textContent=trials.length;
-    document.getElementById('admin-total-users').textContent=subs.length;
-    document.getElementById('admin-monthly-revenue').textContent='₪'+(monthly.length*mp).toLocaleString();
-    const list=document.getElementById('admin-subscribers-list');
-    if(!subs.length){list.innerHTML='<div style="text-align:center;padding:20px;color:#999;font-size:.85rem;">אין נתונים עדיין</div>';return;}
-    list.innerHTML=subs.map(sub=>{
-      const badge=sub.plan==='lifetime'?'lifetime':(isSubActive(sub)?'active':'trial');
-      const label=sub.plan==='lifetime'?'💎 Lifetime':sub.plan==='monthly'?'📅 חודשי':'🎁 ניסיון';
-      const paid=sub.paidAt?.toDate?sub.paidAt.toDate().toLocaleDateString('he-IL'):'—';
-      return`<div class="subscriber-row"><div><div class="subscriber-email">${sub.uid.slice(0,18)}...</div><div class="subscriber-meta">${label} · ${paid}</div></div><span class="sub-badge ${badge}">${isSubActive(sub)?'✅ פעיל':'🎁 ניסיון'}</span></div>`;
-    }).join('');
-  }catch(e){document.getElementById('admin-subscribers-list').innerHTML=`<div style="color:red;padding:14px;font-size:.8rem;">שגיאה: ${e.message}</div>`;}
 }
 async function loadFromFirestore(uid){
   if(!db){loadAll();startupUI();return;}
