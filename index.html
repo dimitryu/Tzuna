@@ -140,8 +140,9 @@ header h1{font-size:1.4rem;font-weight:900;text-align:center;flex:1;}
 .si-row{display:flex;align-items:center;justify-content:space-between;padding:11px 0;border-bottom:1px solid var(--border);}
 .si-row:last-child{border-bottom:none;}
 .sl{font-weight:600;font-size:.85rem;}.ss{font-size:.7rem;color:var(--text-light);margin-top:1px;}
-.install-banner{background:linear-gradient(135deg,#27ae60,#1abc9c);color:white;border-radius:14px;padding:12px 14px;margin-bottom:11px;display:flex;align-items:center;justify-content:space-between;font-size:.82rem;font-weight:600;animation:fu .4s;}
-.install-banner button{background:rgba(255,255,255,.25);border:none;color:white;border-radius:20px;padding:5px 12px;font-family:'Heebo',sans-serif;font-weight:700;font-size:.76rem;cursor:pointer;}
+.install-banner{background:linear-gradient(135deg,#27ae60,#1abc9c);color:white;border-radius:14px;padding:14px 16px;margin-bottom:11px;display:flex;align-items:center;justify-content:space-between;font-size:.85rem;font-weight:700;animation:fu .4s;box-shadow:0 4px 16px rgba(39,174,96,.3);}
+.install-banner button{background:rgba(255,255,255,.25);border:none;color:white;border-radius:20px;padding:6px 14px;font-family:'Heebo',sans-serif;font-weight:700;font-size:.78rem;cursor:pointer;}
+.install-ios{background:linear-gradient(135deg,#27ae60,#1abc9c);color:white;border-radius:14px;padding:14px 16px;margin-bottom:11px;animation:fu .4s;box-shadow:0 4px 16px rgba(39,174,96,.3);}
 .empty{text-align:center;padding:12px;color:var(--text-light);}
 .empty .ei{font-size:1.4rem;margin-bottom:4px;}
 .empty p{font-size:.76rem;}
@@ -585,6 +586,13 @@ header h1{font-size:1.4rem;font-weight:900;text-align:center;flex:1;}
         <div class="card-title">💳 המנוי שלי</div>
         <div id="sub-settings-content" style="font-size:.84rem;color:var(--text-light);">טוען...</div>
       </div>
+      <div class="card" id="install-settings-card">
+        <div class="card-title">📲 התקנת האפליקציה</div>
+        <div id="install-settings-content">
+          <p style="font-size:.82rem;color:var(--text-light);margin-bottom:12px;line-height:1.6;">הוסף את תזונה למסך הבית שלך — תפתח כאפליקציה מלאה, ללא דפדפן!</p>
+          <div id="install-settings-btn-wrap"></div>
+        </div>
+      </div>
       <div class="card">
         <div class="card-title">⚙️ נוסף</div>
         <div class="si-row"><div><div class="sl">איפוס יום</div><div class="ss">מחק ארוחות ומים</div></div><button class="btn br bsm" onclick="rstDay()">איפוס</button></div>
@@ -883,7 +891,7 @@ function pg(id){
   NAV_PAGES.forEach((n,i)=>{if(n===id)document.querySelectorAll('.nav-btn')[i].classList.add('active');});
   if(id==='home')uhome();
   if(id==='food')rfood();
-  if(id==='settings'){rsettings();if(currentUser)getSubscription(currentUser.uid).then(s=>showSubSettingsCard(s));}
+  if(id==='settings'){rsettings();if(currentUser)getSubscription(currentUser.uid).then(s=>showSubSettingsCard(s));updateInstallSettingsCard();}
   if(id==='menu')initMenuPage();
   if(id==='calc'){
     if(S.calcSaved){if(S.calcSaved.age)document.getElementById('age').value=S.calcSaved.age;if(S.calcSaved.wt)document.getElementById('wt').value=S.calcSaved.wt;if(S.calcSaved.ht)document.getElementById('ht').value=S.calcSaved.ht;if(S.calcSaved.act)document.getElementById('act').value=S.calcSaved.act;}
@@ -1194,13 +1202,61 @@ async function generateFridgeMeal(){
 function setupPWA(){
   try{if('serviceWorker' in navigator)navigator.serviceWorker.register('./sw.js').catch(()=>{});}catch{}
   window.addEventListener('beforeinstallprompt',ev=>{ev.preventDefault();deferredInstallPrompt=ev;showInstallBanner();});
-  window.addEventListener('appinstalled',()=>{document.getElementById('install-wrap').innerHTML='';toast('אפליקציה הותקנה! 🎉','success');});
+  window.addEventListener('appinstalled',()=>{document.getElementById('install-wrap').innerHTML='';toast('אפליקציה הותקנה! 🎉','success');updateInstallSettingsCard();});
 }
 function showInstallBanner(){
-  const wrap=document.getElementById('install-wrap');if(!wrap||wrap.innerHTML)return;
+  const wrap=document.getElementById('install-wrap');
+  if(!wrap||wrap.innerHTML)return;
   const isIOS=/iphone|ipad|ipod/i.test(navigator.userAgent);
-  if(isIOS){wrap.innerHTML=`<div class="install-banner" style="flex-direction:column;gap:6px;align-items:flex-start;"><div style="font-weight:700;">📲 הוסף לבית:</div><div style="font-size:.76rem;opacity:.9;">לחץ <strong>שתף ↑</strong> ← <strong>"הוסף למסך הבית"</strong></div><button onclick="this.parentElement.parentElement.innerHTML=''" style="background:rgba(255,255,255,.25);border:none;color:white;border-radius:16px;padding:4px 12px;cursor:pointer;font-family:Heebo,sans-serif;font-size:.76rem;align-self:flex-end;">הבנתי ✓</button></div>`;}
-  else wrap.innerHTML=`<div class="install-banner">📲 הוסף למסך הבית כאפליקציה!<button onclick="if(window.deferredInstallPrompt){window.deferredInstallPrompt.prompt();window.deferredInstallPrompt=null;document.getElementById('install-wrap').innerHTML=''}">התקן</button></div>`;
+  if(isIOS){
+    wrap.innerHTML=`<div class="install-ios">
+      <div style="font-size:.9rem;font-weight:700;margin-bottom:8px;">📲 הוסף לבית — הוראות לאייפון</div>
+      <div style="font-size:.79rem;opacity:.92;line-height:2.1;">
+        1️⃣ לחץ על <strong>שתף ↑</strong> בסרגל הדפדפן<br>
+        2️⃣ גלול מטה ובחר <strong>"הוסף למסך הבית"</strong><br>
+        3️⃣ לחץ <strong>"הוסף"</strong> — זהו! 🎉
+      </div>
+      <button onclick="document.getElementById('install-wrap').innerHTML='';localStorage.setItem('install_dismissed','1')" style="background:rgba(255,255,255,.22);border:none;color:white;border-radius:16px;padding:6px 14px;font-family:Heebo,sans-serif;font-size:.76rem;cursor:pointer;margin-top:10px;display:block;margin-right:auto;">הבנתי ✓</button>
+    </div>`;
+  } else {
+    wrap.innerHTML=`<div class="install-banner">
+      <div><div style="font-size:.9rem;">📲 הוסף לבית</div><div style="font-size:.72rem;opacity:.85;margin-top:2px;">פתח כאפליקציה מהירה ללא דפדפן</div></div>
+      <div style="display:flex;gap:8px;">
+        <button onclick="installApp()">התקן ⬇️</button>
+        <button onclick="document.getElementById('install-wrap').innerHTML='';localStorage.setItem('install_dismissed','1')" style="background:rgba(255,255,255,.1);">×</button>
+      </div>
+    </div>`;
+  }
+  updateInstallSettingsCard();
+}
+function installApp(){
+  if(window.deferredInstallPrompt){
+    window.deferredInstallPrompt.prompt();
+    window.deferredInstallPrompt.userChoice.then(()=>{
+      window.deferredInstallPrompt=null;
+      document.getElementById('install-wrap').innerHTML='';
+      updateInstallSettingsCard();
+    });
+  }
+}
+function updateInstallSettingsCard(){
+  const wrap=document.getElementById('install-settings-btn-wrap');
+  if(!wrap)return;
+  const isIOS=/iphone|ipad|ipod/i.test(navigator.userAgent);
+  const isInstalled=window.matchMedia('(display-mode: standalone)').matches||navigator.standalone;
+  if(isInstalled){
+    wrap.innerHTML=`<div style="background:var(--green-light);border-radius:10px;padding:10px 14px;font-size:.82rem;color:var(--green-dark);font-weight:700;">✅ האפליקציה מותקנת על המכשיר שלך!</div>`;
+  } else if(isIOS){
+    wrap.innerHTML=`<div style="background:#f0faf5;border-radius:12px;padding:12px 14px;font-size:.8rem;color:var(--text);line-height:2.1;">
+      1️⃣ לחץ על <strong>שתף ↑</strong> בדפדפן<br>
+      2️⃣ בחר <strong>"הוסף למסך הבית"</strong><br>
+      3️⃣ לחץ <strong>"הוסף"</strong>
+    </div>`;
+  } else if(window.deferredInstallPrompt){
+    wrap.innerHTML=`<button class="btn bg bfull" onclick="installApp()">📲 התקן על המכשיר</button>`;
+  } else {
+    wrap.innerHTML=`<div style="font-size:.78rem;color:var(--text-light);line-height:1.6;">האפליקציה כבר מותקנת, או שהדפדפן שלך לא תומך בהתקנה ישירה.<br>נסה דרך Chrome על Android.</div>`;
+  }
 }
 function generateIcons(){
   ['icon-180','favicon-32'].forEach(id=>{
