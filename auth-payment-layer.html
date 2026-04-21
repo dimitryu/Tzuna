@@ -1,0 +1,866 @@
+<!DOCTYPE html>
+<!--
+  TZUNA SaaS — Auth + Subscription Gate
+  ======================================
+  הוסף את הקוד הזה לתחילת index.html שלך,
+  לפני ה-<head> הקיים — או פשוט השתמש בקובץ זה
+  כ-wrapper שטוען את האפליקציה.
+  
+  קובץ זה מכיל:
+  1. Firebase Auth (Google Sign-In)
+  2. Subscription check + Paywall
+  3. Admin dashboard
+  4. Firestore sync לנתוני המשתמש
+-->
+
+<!--
+╔══════════════════════════════════════════════════════════╗
+║  TZUNA SAAS — AUTH + SUBSCRIPTION GATE                   ║
+║  הוראות: חפש "PASTE YOUR TZUNA APP BELOW" והכנס את      ║
+║  תוכן index.html המקורי שם                              ║
+╚══════════════════════════════════════════════════════════╝
+
+הוראות שילוב מהירות:
+1. פתח את index.html של TZUNA
+2. בתחילת ה-<script> הגדול — הוסף את FIREBASE_CONFIG
+3. לפני ה-setupPWA(); בסוף — הוסף initAuth();
+4. לפני <!-- ONBOARDING --> — הוסף את 3 המסכים החדשים
+
+ראה SETUP.md למדריך מלא.
+-->
+
+<!-- ══════════════════════════════════════════════════════
+     AUTH SCREENS CSS — הוסף לתוך <style> הקיים
+     ══════════════════════════════════════════════════════ -->
+<style id="saas-styles">
+/* ── Auth Screen ── */
+#auth-screen {
+  position:fixed; inset:0; z-index:2000;
+  background:linear-gradient(145deg,#1a2e1a 0%,#1e8449 50%,#0f2010 100%);
+  display:flex; flex-direction:column; align-items:center; justify-content:center;
+  padding:24px; font-family:'Heebo',sans-serif;
+}
+.auth-logo { font-size:4rem; margin-bottom:8px; animation:floatBounce 2s ease-in-out infinite; }
+.auth-title { font-size:1.8rem; font-weight:900; color:white; margin-bottom:4px; }
+.auth-sub { font-size:.9rem; color:rgba(255,255,255,.75); margin-bottom:40px; }
+.btn-google {
+  display:flex; align-items:center; gap:12px; padding:14px 24px;
+  background:white; border:none; border-radius:14px; cursor:pointer;
+  font-family:'Heebo',sans-serif; font-size:1rem; font-weight:700; color:#2c3e50;
+  box-shadow:0 4px 20px rgba(0,0,0,.3); transition:all .2s;
+}
+.btn-google:active { transform:scale(.97); }
+.btn-google img { width:22px; height:22px; }
+.auth-benefits {
+  margin-top:32px; display:flex; flex-direction:column; gap:10px; width:100%; max-width:300px;
+}
+.auth-benefit {
+  display:flex; align-items:center; gap:10px;
+  color:rgba(255,255,255,.85); font-size:.85rem;
+}
+.auth-benefit-icon { font-size:1.2rem; flex-shrink:0; }
+
+/* ── Paywall Screen ── */
+#paywall-screen {
+  position:fixed; inset:0; z-index:1900;
+  background:#f0faf5; display:none; flex-direction:column;
+  font-family:'Heebo',sans-serif; overflow-y:auto;
+}
+.paywall-header {
+  background:linear-gradient(135deg,#27ae60,#1abc9c);
+  padding:28px 20px 20px; text-align:center; color:white;
+}
+.paywall-header h1 { font-size:1.5rem; font-weight:900; margin-bottom:4px; }
+.paywall-header p { font-size:.85rem; opacity:.9; }
+.paywall-trial-badge {
+  display:inline-block; background:rgba(255,255,255,.25);
+  padding:5px 16px; border-radius:20px; font-size:.8rem; font-weight:700; margin-top:8px;
+}
+.paywall-body { padding:20px; max-width:480px; margin:0 auto; width:100%; }
+.plan-card {
+  background:white; border-radius:18px; padding:20px;
+  border:2px solid #e8e8e8; margin-bottom:14px;
+  box-shadow:0 2px 16px rgba(0,0,0,.06); cursor:pointer; transition:all .2s;
+  position:relative; overflow:hidden;
+}
+.plan-card:active { transform:scale(.98); }
+.plan-card.popular { border-color:#27ae60; }
+.plan-badge {
+  position:absolute; top:12px; left:12px;
+  background:#27ae60; color:white; padding:3px 10px; border-radius:10px;
+  font-size:.68rem; font-weight:700;
+}
+.plan-name { font-size:1.1rem; font-weight:900; color:#2c3e50; margin-bottom:4px; }
+.plan-price { font-size:1.8rem; font-weight:900; color:#27ae60; }
+.plan-price-sub { font-size:.75rem; color:#7f8c8d; }
+.plan-features { margin-top:12px; }
+.plan-feature {
+  display:flex; align-items:center; gap:8px;
+  font-size:.82rem; color:#2c3e50; padding:3px 0;
+}
+.btn-subscribe {
+  width:100%; padding:14px; border:none; border-radius:12px;
+  font-family:'Heebo',sans-serif; font-size:1rem; font-weight:700;
+  cursor:pointer; margin-top:12px; transition:all .2s;
+}
+.btn-subscribe:active { transform:scale(.98); }
+.btn-subscribe.primary { background:linear-gradient(135deg,#27ae60,#1abc9c); color:white; box-shadow:0 4px 16px rgba(39,174,96,.4); }
+.btn-subscribe.secondary { background:#f0faf5; color:#27ae60; border:2px solid #27ae60; }
+.paywall-footer { text-align:center; font-size:.72rem; color:#7f8c8d; margin-top:8px; padding-bottom:24px; }
+.btn-logout-paywall {
+  background:none; border:none; color:#7f8c8d; font-family:'Heebo',sans-serif;
+  font-size:.78rem; cursor:pointer; margin-top:16px; text-decoration:underline;
+}
+
+/* ── Subscription Status Bar (shown in app) ── */
+#sub-status-bar {
+  background:linear-gradient(135deg,#27ae60,#1abc9c);
+  color:white; font-size:.72rem; font-weight:700;
+  text-align:center; padding:3px 8px; display:none;
+}
+#sub-status-bar.trial { background:linear-gradient(135deg,#e67e22,#d35400); }
+#sub-status-bar.expiring { background:linear-gradient(135deg,#e74c3c,#c0392b); }
+
+/* ── Admin Dashboard ── */
+#admin-screen {
+  position:fixed; inset:0; z-index:1800;
+  background:#f5f5f5; display:none; flex-direction:column;
+  font-family:'Heebo',sans-serif; overflow-y:auto;
+}
+.admin-header {
+  background:linear-gradient(135deg,#2c3e50,#34495e);
+  color:white; padding:20px; display:flex; align-items:center; justify-content:space-between;
+}
+.admin-header h1 { font-size:1.2rem; font-weight:900; }
+.btn-close-admin { background:rgba(255,255,255,.2); border:none; color:white; padding:8px 14px; border-radius:8px; cursor:pointer; font-family:'Heebo',sans-serif; font-weight:700; }
+.admin-stats { display:grid; grid-template-columns:1fr 1fr; gap:12px; padding:16px; }
+.admin-stat { background:white; border-radius:14px; padding:16px; text-align:center; box-shadow:0 2px 8px rgba(0,0,0,.06); }
+.admin-stat-num { font-size:1.8rem; font-weight:900; color:#27ae60; }
+.admin-stat-lbl { font-size:.73rem; color:#7f8c8d; margin-top:2px; }
+.admin-table-wrap { padding:0 16px 24px; }
+.admin-table-title { font-size:.85rem; font-weight:700; color:#2c3e50; margin-bottom:10px; }
+.subscriber-row {
+  background:white; border-radius:12px; padding:12px 14px; margin-bottom:8px;
+  box-shadow:0 2px 6px rgba(0,0,0,.05); display:flex; align-items:center; justify-content:space-between;
+}
+.subscriber-info { flex:1; }
+.subscriber-email { font-size:.82rem; font-weight:700; color:#2c3e50; }
+.subscriber-meta { font-size:.7rem; color:#7f8c8d; margin-top:2px; }
+.sub-badge {
+  font-size:.7rem; font-weight:700; padding:3px 10px; border-radius:10px;
+}
+.sub-badge.active { background:#d5f5e3; color:#27ae60; }
+.sub-badge.trial { background:#fdebd0; color:#e67e22; }
+.sub-badge.cancelled { background:#fadbd8; color:#e74c3c; }
+.sub-badge.expired { background:#f2f3f4; color:#7f8c8d; }
+.sub-badge.lifetime { background:#e8daef; color:#8e44ad; }
+</style>
+
+<!-- ══════════════════════════════════════════════════════
+     NEW HTML SCREENS — הוסף לפני <!-- ONBOARDING -->
+     ══════════════════════════════════════════════════════ -->
+
+<!-- SUBSCRIPTION STATUS BAR (shown inside app when trial) -->
+<div id="sub-status-bar"></div>
+
+<!-- AUTH SCREEN -->
+<div id="auth-screen">
+  <div class="auth-logo">🥗</div>
+  <div class="auth-title">תזונה Premium</div>
+  <div class="auth-sub">יומן תזונה חכם לנוער</div>
+
+  <button class="btn-google" onclick="signInWithGoogle()">
+    <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" alt="Google"/>
+    כנס עם Google
+  </button>
+
+  <div class="auth-benefits">
+    <div class="auth-benefit"><span class="auth-benefit-icon">🔒</span> <span>הנתונים שלך פרטיים ומוגנים</span></div>
+    <div class="auth-benefit"><span class="auth-benefit-icon">📱</span> <span>גישה מכל מכשיר</span></div>
+    <div class="auth-benefit"><span class="auth-benefit-icon">🎁</span> <span>7 ימי ניסיון חינם</span></div>
+    <div class="auth-benefit"><span class="auth-benefit-icon">🤖</span> <span>יועץ AI אישי לתזונה</span></div>
+  </div>
+</div>
+
+<!-- PAYWALL SCREEN -->
+<div id="paywall-screen">
+  <div class="paywall-header">
+    <div style="font-size:2.5rem;margin-bottom:8px;">🥗</div>
+    <h1>תזונה Premium</h1>
+    <p>בחר תוכנית כדי להמשיך</p>
+    <div class="paywall-trial-badge" id="trial-remaining-badge" style="display:none;"></div>
+  </div>
+
+  <div class="paywall-body">
+
+    <!-- Monthly Plan -->
+    <div class="plan-card popular" onclick="subscribePlan('monthly')">
+      <div class="plan-badge">⭐ הכי פופולרי</div>
+      <div class="plan-name">מנוי חודשי</div>
+      <div style="display:flex;align-items:baseline;gap:4px;">
+        <div class="plan-price" id="monthly-price-display">₪29</div>
+        <div class="plan-price-sub">/ חודש</div>
+      </div>
+      <div class="plan-features">
+        <div class="plan-feature">✅ מעקב קלוריות + חלבון</div>
+        <div class="plan-feature">✅ יועץ AI בלתי מוגבל</div>
+        <div class="plan-feature">✅ תפריט שבועי חכם</div>
+        <div class="plan-feature">✅ זיהוי אוכל מתמונות</div>
+        <div class="plan-feature">✅ ביטול בכל עת</div>
+      </div>
+      <button class="btn-subscribe primary" onclick="subscribePlan('monthly');event.stopPropagation()">
+        🚀 התחל עכשיו
+      </button>
+    </div>
+
+    <!-- Lifetime Plan -->
+    <div class="plan-card" onclick="subscribePlan('lifetime')">
+      <div class="plan-name">💎 Lifetime — פעם אחת</div>
+      <div style="display:flex;align-items:baseline;gap:4px;">
+        <div class="plan-price" id="lifetime-price-display">₪149</div>
+        <div class="plan-price-sub">תשלום חד-פעמי</div>
+      </div>
+      <div class="plan-features">
+        <div class="plan-feature">✅ כל התכונות — לנצח</div>
+        <div class="plan-feature">✅ עדכונים עתידיים כלולים</div>
+        <div class="plan-feature">✅ ללא חיובים חוזרים</div>
+        <div class="plan-feature">🎁 חיסכון של עשרות שקלים</div>
+      </div>
+      <button class="btn-subscribe secondary" onclick="subscribePlan('lifetime');event.stopPropagation()">
+        💎 רכוש עכשיו
+      </button>
+    </div>
+
+    <div class="paywall-footer">
+      🔒 תשלום מאובטח דרך Lemon Squeezy<br>
+      ביטול מנוי בכל עת מתוך ההגדרות
+    </div>
+
+    <div style="text-align:center;">
+      <button class="btn-logout-paywall" onclick="signOutUser()">
+        👋 התנתק / החלף חשבון
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- ADMIN DASHBOARD -->
+<div id="admin-screen">
+  <div class="admin-header">
+    <div>
+      <div style="font-size:.75rem;opacity:.7;margin-bottom:2px;">👑 Admin Dashboard</div>
+      <h1>תזונה — ניהול מנויים</h1>
+    </div>
+    <button class="btn-close-admin" onclick="closeAdmin()">✕ סגור</button>
+  </div>
+
+  <div class="admin-stats">
+    <div class="admin-stat">
+      <div class="admin-stat-num" id="admin-active-count">—</div>
+      <div class="admin-stat-lbl">מנויים פעילים</div>
+    </div>
+    <div class="admin-stat">
+      <div class="admin-stat-num" id="admin-trial-count">—</div>
+      <div class="admin-stat-lbl">בניסיון חינם</div>
+    </div>
+    <div class="admin-stat">
+      <div class="admin-stat-num" id="admin-monthly-revenue">—</div>
+      <div class="admin-stat-lbl">MRR (₪)</div>
+    </div>
+    <div class="admin-stat">
+      <div class="admin-stat-num" id="admin-total-users">—</div>
+      <div class="admin-stat-lbl">סה"כ משתמשים</div>
+    </div>
+  </div>
+
+  <div class="admin-table-wrap">
+    <div class="admin-table-title">🏷️ מנויים פעילים</div>
+    <div id="admin-subscribers-list">
+      <div style="text-align:center;padding:20px;color:#999;font-size:.85rem;">טוען...</div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════
+     JAVASCRIPT ADDITIONS
+     הוסף את הקוד הבא בתחילת ה-<script> הגדול
+     לפני כל קוד אחר
+     ══════════════════════════════════════════════════════ -->
+<script>
+// ╔══════════════════════════════════════════════════════════╗
+// ║  TZUNA SAAS CONFIG — עדכן את הערכים הבאים              ║
+// ╚══════════════════════════════════════════════════════════╝
+
+const FIREBASE_CONFIG = {
+  apiKey:            "YOUR_API_KEY",
+  authDomain:        "YOUR_PROJECT.firebaseapp.com",
+  projectId:         "YOUR_PROJECT_ID",
+  storageBucket:     "YOUR_PROJECT.appspot.com",
+  messagingSenderId: "YOUR_SENDER_ID",
+  appId:             "YOUR_APP_ID"
+};
+
+const ADMIN_UID     = "YOUR_FIREBASE_UID";         // ה-UID שלך
+const TRIAL_DAYS    = 7;                             // ימי ניסיון חינם
+
+// Lemon Squeezy Checkout URLs
+// הוסף את ID המוצרים אחרי /?checkout[custom][uid]= בקוד למטה
+const LEMON_CHECKOUT_BASE_MONTHLY  = "https://store.lemonsqueezy.com/buy/YOUR_MONTHLY_PRODUCT_ID";
+const LEMON_CHECKOUT_BASE_LIFETIME = "https://store.lemonsqueezy.com/buy/YOUR_LIFETIME_PRODUCT_ID";
+
+// מחירים להצגה
+const PRICE_MONTHLY  = "₪29";
+const PRICE_LIFETIME = "₪149";
+
+// ── Firebase State ──────────────────────────────────────────
+let currentUser   = null;
+let db            = null;
+let auth          = null;
+let fbInitialized = false;
+
+// ── Subscription State ──────────────────────────────────────
+let subStatus = null; // 'active' | 'trial' | 'expired' | 'cancelled' | null
+let subData   = {};
+let trialDaysLeft = 0;
+
+// ─── Init Firebase ──────────────────────────────────────────
+function initFirebase() {
+  // הוסף SDKs ב-<head>:
+  // <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+  // <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
+  // <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
+
+  if (fbInitialized) return;
+  if (typeof firebase === 'undefined') {
+    // Firebase לא נטען — טען דינמית
+    loadFirebaseSDKs(() => setupFirebase());
+    return;
+  }
+  setupFirebase();
+}
+
+function loadFirebaseSDKs(callback) {
+  const sdks = [
+    'https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js',
+    'https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js',
+    'https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js',
+  ];
+  let loaded = 0;
+  sdks.forEach(src => {
+    const s = document.createElement('script');
+    s.src = src;
+    s.onload = () => { loaded++; if (loaded === sdks.length) callback(); };
+    document.head.appendChild(s);
+  });
+}
+
+function setupFirebase() {
+  if (fbInitialized) return;
+  fbInitialized = true;
+
+  try {
+    if (!firebase.apps.length) firebase.initializeApp(FIREBASE_CONFIG);
+    auth = firebase.auth();
+    db   = firebase.firestore();
+  } catch (e) {
+    console.error('Firebase init error:', e);
+    // Fallback — הצג האפליקציה ללא auth
+    showAppDirectly();
+    return;
+  }
+
+  // הצג login בינתיים
+  document.getElementById('auth-screen').style.display = 'flex';
+
+  // הפעל Google Sign-in Provider
+  auth.onAuthStateChanged(async user => {
+    if (user) {
+      currentUser = user;
+      document.getElementById('auth-screen').style.display = 'none';
+      await handleUserLoggedIn(user);
+    } else {
+      currentUser = null;
+      document.getElementById('auth-screen').style.display = 'flex';
+      document.getElementById('paywall-screen').style.display = 'none';
+    }
+  });
+}
+
+// ─── Auth Actions ────────────────────────────────────────────
+async function signInWithGoogle() {
+  if (!auth) { initFirebase(); return; }
+  const provider = new firebase.auth.GoogleAuthProvider();
+  provider.setCustomParameters({ prompt: 'select_account' });
+  try {
+    await auth.signInWithPopup(provider);
+  } catch (e) {
+    if (e.code !== 'auth/popup-closed-by-user') {
+      alert('שגיאה בכניסה: ' + e.message);
+    }
+  }
+}
+
+function signOutUser() {
+  if (!auth) return;
+  if (confirm('להתנתק?')) {
+    auth.signOut().then(() => {
+      currentUser = null;
+      document.getElementById('paywall-screen').style.display = 'none';
+    });
+  }
+}
+
+// ─── User Logged In Flow ─────────────────────────────────────
+async function handleUserLoggedIn(user) {
+  // אם admin — הצג גם כפתור dashboard
+  if (user.uid === ADMIN_UID) {
+    injectAdminButton();
+  }
+
+  // בדוק subscription
+  const sub = await getSubscription(user.uid);
+
+  if (isSubscriptionActive(sub)) {
+    // יש מנוי פעיל — הצג אפליקציה
+    showApp(sub);
+    // טען נתוני משתמש מ-Firestore
+    await loadUserDataFromFirestore(user.uid);
+  } else if (isInTrial(sub)) {
+    // בתקופת ניסיון
+    trialDaysLeft = getTrialDaysLeft(sub);
+    showApp(sub, true);
+    await loadUserDataFromFirestore(user.uid);
+    showTrialStatusBar(trialDaysLeft);
+  } else {
+    // אין מנוי — הצג paywall
+    showPaywall(sub);
+  }
+}
+
+// ─── Subscription Logic ───────────────────────────────────────
+async function getSubscription(uid) {
+  if (!db) return null;
+  try {
+    const doc = await db.collection('tenants').doc(uid)
+                        .collection('subscription').doc('current').get();
+    return doc.exists ? doc.data() : null;
+  } catch (e) {
+    console.warn('Could not fetch subscription:', e);
+    return null;
+  }
+}
+
+function isSubscriptionActive(sub) {
+  if (!sub) return false;
+  if (sub.plan === 'lifetime' && sub.status === 'active') return true;
+  if (sub.status === 'active') {
+    // check if not expired
+    if (sub.nextBillingDate) {
+      const next = sub.nextBillingDate.toDate ? sub.nextBillingDate.toDate() : new Date(sub.nextBillingDate);
+      return next > new Date();
+    }
+    return true;
+  }
+  // cancelled but still in paid period
+  if (sub.status === 'cancelled' && sub.endsAt) {
+    const ends = sub.endsAt.toDate ? sub.endsAt.toDate() : new Date(sub.endsAt);
+    return ends > new Date();
+  }
+  return false;
+}
+
+function isInTrial(sub) {
+  if (!sub && currentUser) {
+    // משתמש חדש — בדוק creation time
+    const created = currentUser.metadata.creationTime;
+    if (!created) return true;
+    const createdDate = new Date(created);
+    const daysSince = (Date.now() - createdDate.getTime()) / (1000 * 60 * 60 * 24);
+    return daysSince <= TRIAL_DAYS;
+  }
+  if (sub && sub.status === 'trial') {
+    return getTrialDaysLeft(sub) > 0;
+  }
+  return false;
+}
+
+function getTrialDaysLeft(sub) {
+  if (!currentUser) return 0;
+  const created = currentUser.metadata.creationTime;
+  if (!created) return TRIAL_DAYS;
+  const createdDate = new Date(created);
+  const daysSince = (Date.now() - createdDate.getTime()) / (1000 * 60 * 60 * 24);
+  return Math.max(0, Math.ceil(TRIAL_DAYS - daysSince));
+}
+
+// ─── UI Flow ───────────────────────────────────────────────────
+function showApp(sub, isTrial = false) {
+  document.getElementById('paywall-screen').style.display = 'none';
+  document.getElementById('auth-screen').style.display = 'none';
+  subData = sub || {};
+  subStatus = isTrial ? 'trial' : 'active';
+}
+
+function showPaywall(sub) {
+  const paywall = document.getElementById('paywall-screen');
+  paywall.style.display = 'flex';
+
+  // הצג מחירים
+  document.getElementById('monthly-price-display').textContent  = PRICE_MONTHLY;
+  document.getElementById('lifetime-price-display').textContent = PRICE_LIFETIME;
+
+  // הצג ימי ניסיון אם עדיין יש
+  const daysLeft = getTrialDaysLeft(sub);
+  const badge = document.getElementById('trial-remaining-badge');
+  if (daysLeft > 0) {
+    badge.textContent = `🎁 נשארו ${daysLeft} ימי ניסיון חינם`;
+    badge.style.display = 'inline-block';
+
+    // הוסף כפתור "המשך ניסיון" אם יש עדיין ימים
+    if (!document.getElementById('btn-continue-trial')) {
+      const btn = document.createElement('button');
+      btn.id = 'btn-continue-trial';
+      btn.className = 'btn-subscribe secondary';
+      btn.style.cssText = 'width:calc(100% - 40px);margin:0 20px;display:block;';
+      btn.textContent = `⏳ המשך ניסיון (${daysLeft} ימים נותרו)`;
+      btn.onclick = () => {
+        showApp(sub, true);
+        showTrialStatusBar(daysLeft);
+        loadUserDataFromFirestore(currentUser.uid);
+      };
+      document.querySelector('.paywall-footer').before(btn);
+    }
+  } else {
+    badge.style.display = 'none';
+  }
+}
+
+function showTrialStatusBar(daysLeft) {
+  const bar = document.getElementById('sub-status-bar');
+  if (!bar) return;
+  bar.style.display = 'block';
+  if (daysLeft <= 2) {
+    bar.className = 'expiring';
+    bar.textContent = `⚠️ הניסיון שלך מסתיים בעוד ${daysLeft} יום — שדרג עכשיו`;
+  } else {
+    bar.className = 'trial';
+    bar.textContent = `🎁 ניסיון חינם — ${daysLeft} ימים נותרו | לחץ לשדרוג`;
+  }
+  bar.onclick = () => showPaywall(null);
+  bar.style.cursor = 'pointer';
+}
+
+function showAppDirectly() {
+  // Fallback if Firebase fails
+  document.getElementById('auth-screen').style.display = 'none';
+}
+
+// ─── Payment Flow ──────────────────────────────────────────────
+function subscribePlan(plan) {
+  if (!currentUser) { signInWithGoogle(); return; }
+
+  const uid   = currentUser.uid;
+  const email = currentUser.email || '';
+  const base  = plan === 'monthly' ? LEMON_CHECKOUT_BASE_MONTHLY : LEMON_CHECKOUT_BASE_LIFETIME;
+
+  // הוסף Firebase UID ו-email לCheckout
+  const url = `${base}?checkout[custom][uid]=${encodeURIComponent(uid)}&checkout[email]=${encodeURIComponent(email)}&checkout[name]=${encodeURIComponent(currentUser.displayName||'')}`;
+
+  // פתח Lemon Squeezy checkout בחלון חדש
+  window.open(url, '_blank', 'width=500,height=700');
+
+  // הסבר למשתמש
+  showPaymentPendingMessage();
+}
+
+function showPaymentPendingMessage() {
+  const existing = document.getElementById('payment-pending-msg');
+  if (existing) return;
+  const msg = document.createElement('div');
+  msg.id = 'payment-pending-msg';
+  msg.style.cssText = `
+    position:fixed; bottom:20px; left:50%; transform:translateX(-50%);
+    background:#2c3e50; color:white; padding:14px 20px; border-radius:14px;
+    font-family:'Heebo',sans-serif; font-size:.85rem; font-weight:600;
+    z-index:3000; text-align:center; width:90%; max-width:360px; direction:rtl;
+    box-shadow:0 4px 20px rgba(0,0,0,.4);
+  `;
+  msg.innerHTML = `
+    💳 חלון התשלום נפתח...<br>
+    <span style="font-size:.75rem;opacity:.8;">אחרי התשלום תקבל גישה תוך שניות</span><br>
+    <button onclick="checkPaymentStatus()" style="margin-top:10px;background:rgba(255,255,255,.2);border:none;color:white;padding:7px 16px;border-radius:8px;cursor:pointer;font-family:'Heebo',sans-serif;font-size:.8rem;">✅ שילמתי — בדוק גישה</button>
+  `;
+  document.body.appendChild(msg);
+  setTimeout(() => msg.remove(), 30000);
+}
+
+async function checkPaymentStatus() {
+  document.getElementById('payment-pending-msg')?.remove();
+  if (!currentUser) return;
+  const sub = await getSubscription(currentUser.uid);
+  if (isSubscriptionActive(sub)) {
+    showApp(sub);
+    toast('✅ תשלום אושר! ברוך הבא Premium 🎉', 'success');
+    await loadUserDataFromFirestore(currentUser.uid);
+  } else {
+    toast('⏳ תשלום עדיין מעובד... נסה שוב בעוד דקה', 'warn');
+  }
+}
+
+// ─── Admin Dashboard ──────────────────────────────────────────
+function injectAdminButton() {
+  const existing = document.getElementById('admin-nav-btn');
+  if (existing) return;
+  // הוסף כפתור בbar הניווט
+  const nav = document.querySelector('.bottom-nav');
+  if (!nav) return;
+  const btn = document.createElement('button');
+  btn.id = 'admin-nav-btn';
+  btn.className = 'nav-btn';
+  btn.innerHTML = '<span class="nav-icon">👑</span>מנהל';
+  btn.onclick = () => openAdmin();
+  nav.appendChild(btn);
+}
+
+async function openAdmin() {
+  if (!currentUser || currentUser.uid !== ADMIN_UID) return;
+  const adminScreen = document.getElementById('admin-screen');
+  adminScreen.style.display = 'flex';
+  await loadAdminData();
+}
+
+function closeAdmin() {
+  document.getElementById('admin-screen').style.display = 'none';
+}
+
+async function loadAdminData() {
+  if (!db) return;
+  try {
+    // קרא כל ה-subscriptions (דרך collectionGroup)
+    const snapshot = await db.collectionGroup('subscription')
+      .orderBy('updatedAt', 'desc')
+      .limit(200)
+      .get();
+
+    const subs = snapshot.docs.map(doc => ({
+      uid: doc.ref.parent.parent.id,
+      ...doc.data()
+    }));
+
+    // סטטיסטיקות
+    const active   = subs.filter(s => isSubscriptionActive(s));
+    const trials   = subs.filter(s => s.status === 'trial' || (!s.status));
+    const monthly  = active.filter(s => s.plan === 'monthly');
+    const lifetime = active.filter(s => s.plan === 'lifetime');
+
+    document.getElementById('admin-active-count').textContent  = active.length;
+    document.getElementById('admin-trial-count').textContent   = trials.length;
+    document.getElementById('admin-total-users').textContent   = subs.length;
+
+    // MRR הוצג כ-monthly * 29
+    const monthlyPrice = parseInt(PRICE_MONTHLY.replace(/[^\d]/g, '')) || 29;
+    document.getElementById('admin-monthly-revenue').textContent = 
+      '₪' + (monthly.length * monthlyPrice).toLocaleString();
+
+    // רשימת מנויים
+    const listEl = document.getElementById('admin-subscribers-list');
+    if (!active.length) {
+      listEl.innerHTML = '<div style="text-align:center;padding:20px;color:#999;font-size:.85rem;">אין מנויים עדיין</div>';
+      return;
+    }
+
+    // טען פרופילי משתמשים
+    const rows = await Promise.all(active.map(async sub => {
+      let email = sub.uid;
+      try {
+        const profileDoc = await db.collection('tenants').doc(sub.uid).collection('profile').doc('data').get();
+        if (profileDoc.exists) email = profileDoc.data().email || sub.uid;
+      } catch {}
+
+      const planLabel = sub.plan === 'lifetime' ? '💎 Lifetime' : sub.plan === 'monthly' ? '📅 חודשי' : sub.plan;
+      const statusClass = sub.plan === 'lifetime' ? 'lifetime' : (isSubscriptionActive(sub) ? 'active' : sub.status);
+      const paidDate = sub.paidAt?.toDate ? sub.paidAt.toDate().toLocaleDateString('he-IL') : '—';
+
+      return `<div class="subscriber-row">
+        <div class="subscriber-info">
+          <div class="subscriber-email">${email}</div>
+          <div class="subscriber-meta">${planLabel} · שילם: ${paidDate}</div>
+        </div>
+        <span class="sub-badge ${statusClass}">${isSubscriptionActive(sub) ? '✅ פעיל' : sub.status}</span>
+      </div>`;
+    }));
+
+    listEl.innerHTML = rows.join('');
+
+  } catch (e) {
+    console.error('loadAdminData error:', e);
+    document.getElementById('admin-subscribers-list').innerHTML =
+      `<div style="color:red;padding:16px;font-size:.8rem;">שגיאה בטעינה: ${e.message}</div>`;
+  }
+}
+
+// ─── Firestore Data Sync ──────────────────────────────────────
+let firestoreSaveDebounce = null;
+
+async function loadUserDataFromFirestore(uid) {
+  if (!db) { loadAll(); return; }
+  try {
+    const doc = await db.collection('tenants').doc(uid)
+                        .collection('appdata').doc('main').get();
+    if (doc.exists) {
+      const data = doc.data();
+      // מיזוג עם DEFAULT_STATE
+      S = { ...DEFAULT_STATE, ...data };
+      if (!S.meals)       S.meals = { breakfast:[], lunch:[], dinner:[], snacks:[] };
+      if (!S.historyData) S.historyData = {};
+      if (!S.calcSaved)   S.calcSaved = {};
+
+      // שמור ב-localStorage כ-cache
+      try { localStorage.setItem(STORAGE_KEY, JSON.stringify(S)); } catch {}
+
+      // עדכן UI
+      updateHdr(); initDateInput(); syncToday();
+      uhome(); rfood(); rsettings();
+
+      // Onboarding אם אין שם
+      if (!S.name) {
+        setTimeout(() => {
+          document.getElementById('onboarding').style.display = 'flex';
+        }, 300);
+      }
+    } else {
+      // משתמש חדש — טען מ-localStorage אם יש
+      loadAll();
+      // שמור פרופיל בFirestore
+      await saveUserProfile(uid);
+    }
+  } catch (e) {
+    console.warn('Firestore load error, using localStorage:', e);
+    loadAll();
+  }
+}
+
+async function saveAllToFirestore() {
+  if (!db || !currentUser) return;
+  try {
+    await db.collection('tenants').doc(currentUser.uid)
+            .collection('appdata').doc('main')
+            .set(JSON.parse(JSON.stringify(S)), { merge: true });
+  } catch (e) {
+    console.warn('Firestore save error:', e);
+  }
+}
+
+async function saveUserProfile(uid) {
+  if (!db || !currentUser) return;
+  try {
+    await db.collection('tenants').doc(uid)
+            .collection('profile').doc('data')
+            .set({
+              email:       currentUser.email || '',
+              displayName: currentUser.displayName || '',
+              photoURL:    currentUser.photoURL || '',
+              createdAt:   firebase.firestore.FieldValue.serverTimestamp(),
+            }, { merge: true });
+  } catch {}
+}
+
+// ─── Override saveAll to also sync Firestore ──────────────────
+// NOTE: קוד זה עוקף את saveAll() המקורי בצורה non-destructive
+// הוסף אחרי הגדרת saveAll() המקורית:
+const _originalSaveAll = typeof saveAll === 'function' ? saveAll : () => {};
+function saveAll() {
+  _originalSaveAll();
+  // Debounce Firestore saves (לא יותר מפעם ב-3 שניות)
+  clearTimeout(firestoreSaveDebounce);
+  firestoreSaveDebounce = setTimeout(saveAllToFirestore, 3000);
+}
+
+// ─── Subscription Management (in-app) ─────────────────────────
+// מוסיף לאפשרויות הגדרות — ניהול מנוי
+function injectSubscriptionSettings() {
+  const settingsPage = document.getElementById('page-settings');
+  if (!settingsPage || document.getElementById('sub-settings-card')) return;
+
+  const card = document.createElement('div');
+  card.id = 'sub-settings-card';
+  card.className = 'card';
+  card.innerHTML = `
+    <div class="card-title">💳 המנוי שלי</div>
+    <div id="sub-settings-content" style="font-size:.84rem;color:var(--text-light);">טוען...</div>
+  `;
+  settingsPage.appendChild(card);
+  updateSubscriptionSettingsCard();
+}
+
+async function updateSubscriptionSettingsCard() {
+  const content = document.getElementById('sub-settings-content');
+  if (!content || !currentUser) return;
+  const sub = await getSubscription(currentUser.uid);
+  if (!sub || (!isSubscriptionActive(sub) && !isInTrial(sub))) {
+    content.innerHTML = `
+      <div style="margin-bottom:8px;">📧 ${currentUser.email}</div>
+      <div style="color:var(--red);margin-bottom:10px;">❌ אין מנוי פעיל</div>
+      <button class="btn bg bsm bfull" onclick="document.getElementById('paywall-screen').style.display='flex'">
+        🚀 שדרג עכשיו
+      </button>`;
+  } else {
+    const planLabel = sub?.plan === 'lifetime' ? '💎 Lifetime' : '📅 חודשי';
+    const nextBill  = sub?.nextBillingDate ? 
+      (sub.nextBillingDate.toDate ? sub.nextBillingDate.toDate().toLocaleDateString('he-IL') : '—') : '—';
+    const isTrial   = isInTrial(sub);
+    content.innerHTML = `
+      <div style="margin-bottom:8px;">📧 ${currentUser.email}</div>
+      <div style="color:var(--green-dark);font-weight:700;margin-bottom:6px;">
+        ✅ ${isTrial ? `ניסיון (${getTrialDaysLeft(sub)} ימים נותרו)` : `${planLabel} — פעיל`}
+      </div>
+      ${!isTrial && sub?.plan !== 'lifetime' ? `<div style="font-size:.76rem;">חידוש הבא: ${nextBill}</div>` : ''}
+      ${isTrial ? `<button class="btn bg bsm bfull" style="margin-top:8px;" onclick="document.getElementById('paywall-screen').style.display='flex'">🚀 שדרג עכשיו</button>` : ''}
+      <button class="btn bo bsm bfull" style="margin-top:6px;" onclick="signOutUser()">👋 התנתק</button>
+    `;
+  }
+}
+
+// ─── Auto-inject subscription card when settings page opens ───
+const _originalPg = typeof pg === 'function' ? pg : () => {};
+function pg(id) {
+  _originalPg(id);
+  if (id === 'settings') {
+    injectSubscriptionSettings();
+    updateSubscriptionSettingsCard();
+  }
+}
+
+// ─── INIT ─────────────────────────────────────────────────────
+// הוסף בסוף ה-init הקיים (לפני setupPWA()):
+// initAuth();
+
+function initAuth() {
+  initFirebase();
+}
+</script>
+
+<!--
+══════════════════════════════════════════════════════════════
+  PASTE YOUR TZUNA APP BELOW (from index.html)
+  הכנס כאן את קוד TZUNA המקורי
+══════════════════════════════════════════════════════════════
+
+  השינויים הנדרשים ב-index.html המקורי:
+
+  1. הוסף לתחילת <head>:
+     <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+     <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
+     <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
+
+  2. הוסף את כל הקוד מקובץ זה לפני <!-- ONBOARDING -->
+
+  3. בסוף ה-<script> הגדול (לפני </script>), הוסף:
+     initAuth();
+
+  4. מחק את 3 השורות האחרונות של init הישן:
+     (loadAll; updateHdr; initDateInput; וכו')
+     כי initAuth() יקרא ל-loadUserDataFromFirestore() שמחליף אותן
+
+══════════════════════════════════════════════════════════════
+-->
