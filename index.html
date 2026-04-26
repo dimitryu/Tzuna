@@ -304,11 +304,11 @@ header h1{font-size:1.4rem;font-weight:900;text-align:center;flex:1;}
 <div class="app-shell">
   <div id="sub-status-bar" onclick="showPaywall()"></div>
   <header>
-    <span class="ver-badge" id="ver-badge">v2.6</span>
+    <span class="ver-badge" id="ver-badge">v2.7</span>
     <h1>🥗 תזונה</h1>
     <div style="position:relative;flex-shrink:0;">
-      <button class="date-btn" id="date-btn">טוען...</button>
-      <input type="date" id="date-inp" style="position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%;font-size:16px;" onchange="onDatePick(this.value)" oninput="onDatePick(this.value)"/>
+      <button class="date-btn" id="date-btn" onclick="document.getElementById('date-inp').showPicker&&document.getElementById('date-inp').showPicker()">טוען...</button>
+      <input type="date" id="date-inp" style="position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%;font-size:16px;z-index:10;" onchange="onDatePick(this.value)" oninput="onDatePick(this.value)"/>
     </div>
   </header>
 
@@ -572,8 +572,9 @@ header h1{font-size:1.4rem;font-weight:900;text-align:center;flex:1;}
       <div class="card">
         <div class="card-title">🔑 מפתח AI</div>
         <p style="font-size:.73rem;color:var(--text-light);margin-bottom:7px;line-height:1.5;">נדרש לחישוב קלוריות ויועץ AI.<br>קבל מ-<a href="https://console.anthropic.com" target="_blank" style="color:var(--green-dark);">console.anthropic.com</a></p>
+        <div id="kst" style="font-size:.8rem;font-weight:700;margin-bottom:8px;padding:8px 12px;border-radius:10px;display:none;"></div>
         <div class="akr"><input type="password" id="skey" placeholder="sk-ant-..."/><button class="btn bg bsm" onclick="saveKeyS()">שמור ✓</button></div>
-        <div id="kst" style="font-size:.74rem;margin-top:5px;color:var(--green-dark);"></div>
+        <button class="btn bb bsm bfull" style="margin-top:8px;" onclick="recalcAllMissing()">🔄 חשב מחדש פריטים חסרים</button>
       </div>
       <div class="card"><div class="card-title">📤 ייצוא נתונים</div><button class="btn bg bfull" onclick="openExport()">בחר תאריכים וייצא ⬇️</button></div>
       <div class="card">
@@ -635,7 +636,7 @@ const LEMON_CHECKOUT_MONTHLY  = "https://dimitryu.lemonsqueezy.com/buy/c31f04e4-
 const LEMON_CHECKOUT_LIFETIME = "https://dimitryu.lemonsqueezy.com/buy/936a8d16-362b-4dae-b217-0113a9c974b9";
 // ──────────────────────────────────────────────────────
 
-const VERSION='2.6';
+const VERSION='2.7';
 const STORAGE_KEY='tzuna_v15';
 const LEGACY_KEYS=['tzuna_v14','tzuna_v13','tz6','tz5'];
 const QUOTES=[
@@ -811,6 +812,8 @@ async function loadFromFirestore(uid){
       if(!S.meals)S.meals={breakfast:[],lunch:[],dinner:[],snacks:[]};
       if(!S.historyData)S.historyData={};
       if(!S.calcSaved)S.calcSaved={};
+      // Bug fix #2: טען מפתח מ-localStorage גם אחרי Firestore
+      KEY=localStorage.getItem('tzkey')||'';
       try{localStorage.setItem(STORAGE_KEY,JSON.stringify(S));}catch{}
       showSyncStatus('✅ מסונכרן');
     }else{
@@ -845,15 +848,21 @@ function startRealtimeSync(uid){
       const remote=doc.data();
       if(!remote)return;
 
-      // מיזוג חכם: historyData — הרוחה (remote) הוא האמת, מיזוג עם מה שיש מקומית
-      const mergedHistory={...S.historyData,...remote.historyData};
-      // ארוחות היום — העדף את המקומי (המשתמש ממש עורך עכשיו)
+      // Bug fix #4: שמור ארוחות היום המקומיות לפני כל דריסה
       const today=todayKey();
-      const todayMeals=S.historyData[today]?.meals||S.meals;
+      const localMeals=JSON.parse(JSON.stringify(S.meals));
+      const localWater=S.water;
+
+      // מיזוג historyData בלי ארוחות היום (שנמצאות ב-S.meals)
+      const mergedHistory={...S.historyData,...remote.historyData};
+      delete mergedHistory[today]; // Bug fix #4: אל תגרום לגיבוב עם ארוחות היום
+
       S={...DEFAULT_STATE,...remote,historyData:mergedHistory};
-      // שמור ארוחות היום המקומיות אם יש
-      if(todayMeals){S.meals=todayMeals;}
       if(!S.meals)S.meals={breakfast:[],lunch:[],dinner:[],snacks:[]};
+      // שחזר ארוחות היום המקומיות
+      S.meals=localMeals;
+      S.water=localWater;
+      KEY=localStorage.getItem('tzkey')||KEY; // Bug fix #2: שמור מפתח
       try{localStorage.setItem(STORAGE_KEY,JSON.stringify(S));}catch{}
       uhome();rfood();rsettings();
       showSyncStatus('🔄 עודכן ממכשיר אחר');
@@ -922,15 +931,27 @@ function loadAll(){
     let raw=localStorage.getItem(STORAGE_KEY);
     if(!raw){for(const lk of LEGACY_KEYS){raw=localStorage.getItem(lk);if(raw)break;}}
     if(raw){const p=JSON.parse(raw);S={...DEFAULT_STATE,...p};if(!S.meals)S.meals={breakfast:[],lunch:[],dinner:[],snacks:[]};if(!S.historyData)S.historyData={};if(!S.calcSaved)S.calcSaved={};}
-    KEY=localStorage.getItem('tzkey')||'';
-    const today=todayKey(),lastDay=localStorage.getItem('tzday_v15');
+    KEY=localStorage.getItem('tzkey')||''; // Bug fix #2: תמיד טען מפתח
+    const today=todayKey();
+    const lastDay=localStorage.getItem('tzday_v15');
     if(lastDay&&lastDay!==today){
+      // יום חדש — שמור ארוחות אתמול להיסטוריה
       const allF=Object.values(S.meals).flat();
-      if(allF.length>0){const tc=allF.reduce((a,f)=>a+f.cal,0);const tp=allF.reduce((a,f)=>a+(f.prot||0),0);S.historyData[lastDay]={cal:tc,prot:tp,water:S.water,foods:allF.length,meals:JSON.parse(JSON.stringify(S.meals))};S.streak=(S.streak||0)+1;}
-      S.meals={breakfast:[],lunch:[],dinner:[],snacks:[]};S.water=0;
+      if(allF.length>0){
+        const tc=allF.reduce((a,f)=>a+f.cal,0);
+        const tp=allF.reduce((a,f)=>a+(f.prot||0),0);
+        // Bug fix #4: שמור לתאריך אתמול בדיוק, לא לתאריך אחר
+        if(!S.historyData[lastDay]||S.historyData[lastDay].cal===0){
+          S.historyData[lastDay]={cal:tc,prot:tp,water:S.water,foods:allF.length,meals:JSON.parse(JSON.stringify(S.meals)),mood:S.mood};
+        }
+        S.streak=(S.streak||0)+1;
+      }
+      // Bug fix #4: נקה ארוחות היום — אל תגרור מאתמול
+      S.meals={breakfast:[],lunch:[],dinner:[],snacks:[]};
+      S.water=0;
     }
     localStorage.setItem('tzday_v15',today);
-  }catch{}
+  }catch(e){console.error('loadAll:',e);}
 }
 function syncToday(){
   const k=todayKey();const allF=Object.values(S.meals).flat();
@@ -1291,8 +1312,72 @@ async function send(){
   chat.scrollTop=chat.scrollHeight;saveAll();
 }
 function clearChat(){const c=document.getElementById('chat');while(c.children.length>1)c.removeChild(c.lastChild);S.ch=[];saveAll();}
-function saveKey(){const k=document.getElementById('akin').value.trim();if(!k)return;KEY=k;localStorage.setItem('tzkey',KEY);document.getElementById('apinote').style.display='none';toast('מפתח שמור ✅','success');}
-function saveKeyS(){const k=document.getElementById('skey').value.trim();if(!k)return;KEY=k;localStorage.setItem('tzkey',KEY);document.getElementById('kst').textContent='✅ מפתח שמור';toast('מפתח AI שמור ✅','success');}
+function saveKey(){const k=document.getElementById('akin').value.trim();if(!k)return;KEY=k;localStorage.setItem('tzkey',KEY);document.getElementById('apinote').style.display='none';showKeyStatus();toast('מפתח שמור ✅','success');}
+  if(!KEY){toast('נדרש מפתח API — הגדר בהגדרות','');return;}
+  // מצא כל הפריטים חסרי חישוב — היום + היסטוריה
+  let total=0,done=0;
+  const allDays={'today':S.meals,...Object.fromEntries(Object.entries(S.historyData).map(([k,v])=>[k,v.meals]))};
+  // ספור כמה יש
+  Object.values(allDays).forEach(meals=>{
+    if(!meals)return;
+    Object.values(meals).forEach(items=>{(items||[]).forEach(f=>{if(!f.cal||!f.prot)total++;});});
+  });
+  if(!total){toast('כל הפריטים כבר מחושבים ✅','success');return;}
+  toast(`מחשב ${total} פריטים... ⏳`,'');
+  // חשב את היום
+  for(const meal of ['breakfast','lunch','dinner','snacks']){
+    for(let i=0;i<(S.meals[meal]||[]).length;i++){
+      const f=S.meals[meal][i];
+      if(f.cal&&f.prot)continue;
+      try{const r=await calcNutritionAI(f.name);S.meals[meal][i].cal=r.cal;S.meals[meal][i].prot=r.prot;done++;}
+      catch{}
+    }
+  }
+  // חשב היסטוריה
+  for(const [dayKey,dayData] of Object.entries(S.historyData)){
+    if(!dayData.meals)continue;
+    let changed=false;
+    for(const meal of ['breakfast','lunch','dinner','snacks']){
+      for(let i=0;i<(dayData.meals[meal]||[]).length;i++){
+        const f=dayData.meals[meal][i];
+        if(f.cal&&f.prot)continue;
+        try{const r=await calcNutritionAI(f.name);S.historyData[dayKey].meals[meal][i].cal=r.cal;S.historyData[dayKey].meals[meal][i].prot=r.prot;done++;changed=true;}
+        catch{}
+      }
+    }
+    if(changed){
+      const allF=Object.values(dayData.meals).flat();
+      S.historyData[dayKey].cal=allF.reduce((a,f)=>a+(f.cal||0),0);
+      S.historyData[dayKey].prot=allF.reduce((a,f)=>a+(f.prot||0),0);
+    }
+  }
+  syncToday();uhome();rfood();
+  toast(`✅ חושבו ${done} פריטים!`,'success');
+}
+function saveKeyS(){
+  const k=document.getElementById('skey').value.trim();
+  if(!k){toast('הכנס מפתח תקין','');return;}
+  KEY=k;localStorage.setItem('tzkey',KEY);
+  showKeyStatus();
+  toast('מפתח AI שמור ✅','success');
+}
+function showKeyStatus(){
+  const kst=document.getElementById('kst');
+  if(!kst)return;
+  if(KEY){
+    kst.style.display='block';
+    kst.style.background='var(--green-light)';
+    kst.style.color='var(--green-dark)';
+    kst.textContent='✅ מפתח AI פעיל ושמור';
+    const inp=document.getElementById('skey');
+    if(inp)inp.placeholder='••••••••••••••••••••••••• (שמור)';
+  }else{
+    kst.style.display='block';
+    kst.style.background='#fff3e0';
+    kst.style.color='#e65100';
+    kst.textContent='⚠️ לא הוגדר מפתח AI — חישוב קלוריות לא יעבוד';
+  }
+}
 let calcGl='maintain';
 function setG(g){S.gender=g;document.getElementById('bm').classList.toggle('act',g==='male');document.getElementById('bf').classList.toggle('act',g==='female');}
 function setGl(g){calcGl=g;S.calcGoal=g;['gl','gm','gg'].forEach(id=>document.getElementById(id).classList.remove('act'));const goalId=g==='lose'?'gl':g==='gain'?'gg':'gm';document.getElementById(goalId).classList.add('act');}
@@ -1332,7 +1417,8 @@ function rsettings(){
   document.getElementById('sg-female').classList.toggle('act',S.gender==='female');
   ['sg-lose','sg-maintain','sg-gain'].forEach(id=>{const el=document.getElementById(id);if(el)el.classList.remove('act');});
   const gEl=document.getElementById(S.goal==='lose'?'sg-lose':S.goal==='gain'?'sg-gain':'sg-maintain');if(gEl)gEl.classList.add('act');
-  if(KEY){const kst=document.getElementById('kst');if(kst)kst.textContent='✅ מפתח AI שמור';}
+  if(KEY){const kst=document.getElementById('kst');if(kst)kst.textContent='✅ מפתח שמור';}
+  showKeyStatus();
 }
 function rstDay(){if(!confirm('למחוק ארוחות ומים של היום?'))return;S.meals={breakfast:[],lunch:[],dinner:[],snacks:[]};S.water=0;waterGoalCelebrated=false;syncToday();uhome();rfood();toast('היום אופס ✅','success');}
 function rstAll(){if(!confirm('למחוק הכל? לא ניתן לשחזר!'))return;Object.assign(S,JSON.parse(JSON.stringify(DEFAULT_STATE)));localStorage.removeItem(STORAGE_KEY);saveAll();uhome();rfood();rsettings();toast('הכל נמחק ✅','success');}
