@@ -304,7 +304,7 @@ header h1{font-size:1.4rem;font-weight:900;text-align:center;flex:1;}
 <div class="app-shell">
   <div id="sub-status-bar" onclick="showPaywall()"></div>
   <header>
-    <span class="ver-badge" id="ver-badge">v2.8</span>
+    <span class="ver-badge" id="ver-badge">v2.9</span>
     <h1>🥗 תזונה</h1>
     <div style="position:relative;flex-shrink:0;">
       <button class="date-btn" id="date-btn" onclick="document.getElementById('date-inp').showPicker&&document.getElementById('date-inp').showPicker()">טוען...</button>
@@ -634,7 +634,7 @@ const LEMON_CHECKOUT_MONTHLY  = "https://dimitryu.lemonsqueezy.com/buy/c31f04e4-
 const LEMON_CHECKOUT_LIFETIME = "https://dimitryu.lemonsqueezy.com/buy/936a8d16-362b-4dae-b217-0113a9c974b9";
 // ════════════════════════════════════════════════════
 
-const VERSION='2.8';
+const VERSION='2.9';
 const STORAGE_KEY='tzuna_v15';
 const LEGACY_KEYS=['tzuna_v14','tzuna_v13','tz6','tz5'];
 const QUOTES=[
@@ -805,37 +805,46 @@ let firestoreUnsubscribe=null;
 let isSyncing=false;
 
 async function loadFromFirestore(uid){
-  if(!db){loadAll();startupUI();return;}
   if(firestoreUnsubscribe){firestoreUnsubscribe();firestoreUnsubscribe=null;}
 
-  showSyncStatus('⏳ טוען...');
+  // ── שלב 1: הצג מיד מנתונים מקומיים ── 
+  loadAll(); // טען localStorage
+  startupUI(); // הצג UI מיד
+  if(!S.name)setTimeout(()=>{document.getElementById('onboarding').style.display='flex';},400);
+
+  // ── שלב 2: טען מ-Firebase ברקע ──
+  if(!db){showSyncStatus('⚠️ אופליין');return;}
+  showSyncStatus('☁️ מסנכרן...');
   try{
     const doc=await db.collection('tenants').doc(uid).collection('appdata').doc('main').get();
     if(doc.exists){
       const data=doc.data();
+      // מיזוג — אל תדרוס ארוחות היום שכבר נטענו
+      const today=todayKey();
+      const localMeals=JSON.parse(JSON.stringify(S.meals));
+      const localWater=S.water;
       S={...DEFAULT_STATE,...data};
       if(!S.meals)S.meals={breakfast:[],lunch:[],dinner:[],snacks:[]};
       if(!S.historyData)S.historyData={};
       if(!S.calcSaved)S.calcSaved={};
-      // Bug fix #2: טען מפתח מ-localStorage גם אחרי Firestore
+      // שמור ארוחות היום המקומיות (יותר עדכניות)
+      const localHasData=Object.values(localMeals).flat().length>0;
+      if(localHasData){S.meals=localMeals;S.water=localWater;}
       KEY=localStorage.getItem('tzkey')||'';
       try{localStorage.setItem(STORAGE_KEY,JSON.stringify(S));}catch{}
+      // רענן UI עם נתוני Firebase
+      uhome();rfood();rsettings();
       showSyncStatus('✅ מסונכרן');
     }else{
-      // משתמש חדש — שמור נתונים מקומיים לFirestore
-      loadAll();
+      // משתמש חדש — שמור למה שיש מקומית
       saveUserProfile(uid);
       await saveToFirestore();
       showSyncStatus('✅ נשמר');
     }
   }catch(e){
-    console.error('Load error:',e);
-    loadAll();
-    showSyncStatus('⚠️ אופליין');
+    console.error('Firebase load error:',e);
+    showSyncStatus('⚠️ אופליין — נתונים מקומיים');
   }
-
-  startupUI();
-  if(!S.name)setTimeout(()=>{document.getElementById('onboarding').style.display='flex';},400);
   startRealtimeSync(uid);
 }
 
