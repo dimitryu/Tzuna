@@ -304,7 +304,7 @@ header h1{font-size:1.4rem;font-weight:900;text-align:center;flex:1;}
 <div class="app-shell">
   <div id="sub-status-bar" onclick="showPaywall()"></div>
   <header>
-    <span class="ver-badge" id="ver-badge">v2.7</span>
+    <span class="ver-badge" id="ver-badge">v2.8</span>
     <h1>🥗 תזונה</h1>
     <div style="position:relative;flex-shrink:0;">
       <button class="date-btn" id="date-btn" onclick="document.getElementById('date-inp').showPicker&&document.getElementById('date-inp').showPicker()">טוען...</button>
@@ -616,27 +616,25 @@ header h1{font-size:1.4rem;font-weight:900;text-align:center;flex:1;}
 </div>
 <canvas id="confetti-canvas" style="display:none;"></canvas>
 <script>
-// ╔══════════════════════════════════════════════════════╗
-// ║  TZUNA SAAS — עדכן את הערכים הבאים לפני העלאה!     ║
-// ╚══════════════════════════════════════════════════════╝
+// ═══════════════════ TZUNA CONFIG ═══════════════════
 const FIREBASE_CONFIG = {
-apiKey: "AIzaSyBEBIvrtk0jeHlDe59TGbnpjLhsfz6DFso",
-authDomain: "tzuna-app.firebaseapp.com",
-projectId: "tzuna-app",
-storageBucket: "tzuna-app.firebasestorage.app",
-messagingSenderId: "131909238401",
-appId: "1:131909238401:web:ba302e92571e31d4a91780",
-measurementId: "G-HMX66PQHFE"
+  apiKey:            "AIzaSyBEBIvrtk0jeHlDe59TGbnpjLhsfz6DFso",
+  authDomain:        "tzuna-app.firebaseapp.com",
+  projectId:         "tzuna-app",
+  storageBucket:     "tzuna-app.firebasestorage.app",
+  messagingSenderId: "131909238401",
+  appId:             "1:131909238401:web:ba302e92571e31d4a91780",
+  measurementId:     "G-HMX66PQHFE"
 };
-const ADMIN_UID    = "Z256JANvpsbkpkXLQB5qKNrfWJ72";
-const TRIAL_DAYS   = 7;
-const PRICE_MONTHLY  = "₪29";
-const PRICE_LIFETIME = "₪149";
+const ADMIN_UID               = "Z256JANvpsbkpkXLQB5qKNrfWJ72";
+const TRIAL_DAYS              = 7;
+const PRICE_MONTHLY           = "₪29";
+const PRICE_LIFETIME          = "₪149";
 const LEMON_CHECKOUT_MONTHLY  = "https://dimitryu.lemonsqueezy.com/buy/c31f04e4-f38f-4cab-b8c5-3c58e5e7c5a4";
 const LEMON_CHECKOUT_LIFETIME = "https://dimitryu.lemonsqueezy.com/buy/936a8d16-362b-4dae-b217-0113a9c974b9";
-// ──────────────────────────────────────────────────────
+// ════════════════════════════════════════════════════
 
-const VERSION='2.7';
+const VERSION='2.8';
 const STORAGE_KEY='tzuna_v15';
 const LEGACY_KEYS=['tzuna_v14','tzuna_v13','tz6','tz5'];
 const QUOTES=[
@@ -691,7 +689,14 @@ async function handleAuthChange(user){
     if(isSubActive(sub)||isInTrial(sub)){
       if(isInTrial(sub)&&!isSubActive(sub))showTrialBar(trialDaysLeft());
       startApp();
+      // אם Firebase לא עונה תוך 6 שניות — טען מקומית
+      let loaded=false;
+      const timeout=setTimeout(()=>{
+        if(!loaded){console.warn('Firebase timeout — loading local');loadAll();startupUI();}
+      },6000);
       await loadFromFirestore(user.uid);
+      loaded=true;clearTimeout(timeout);
+      if(user.uid===ADMIN_UID)addAdminBtn();
       showSubSettingsCard(sub);
     }else{showPaywallScreen(sub);}
   }else{
