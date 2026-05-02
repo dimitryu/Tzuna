@@ -304,7 +304,7 @@ header h1{font-size:1.4rem;font-weight:900;text-align:center;flex:1;}
 <div class="app-shell">
   <div id="sub-status-bar" onclick="showPaywall()"></div>
   <header>
-    <span class="ver-badge" id="ver-badge">v3.0</span>
+    <span class="ver-badge" id="ver-badge">v3.1</span>
     <h1>🥗 תזונה</h1>
     <div style="position:relative;flex-shrink:0;">
       <button class="date-btn" id="date-btn" onclick="document.getElementById('date-inp').showPicker&&document.getElementById('date-inp').showPicker()">טוען...</button>
@@ -634,7 +634,7 @@ const LEMON_CHECKOUT_MONTHLY  = "https://dimitryu.lemonsqueezy.com/buy/c31f04e4-
 const LEMON_CHECKOUT_LIFETIME = "https://dimitryu.lemonsqueezy.com/buy/936a8d16-362b-4dae-b217-0113a9c974b9";
 // ════════════════════════════════════════════════════
 
-const VERSION='3.0';
+const VERSION='3.1';
 const STORAGE_KEY='tzuna_v15';
 const LEGACY_KEYS=['tzuna_v14','tzuna_v13','tz6','tz5'];
 const QUOTES=[
@@ -819,17 +819,23 @@ async function loadFromFirestore(uid){
     const doc=await db.collection('tenants').doc(uid).collection('appdata').doc('main').get();
     if(doc.exists){
       const data=doc.data();
-      // מיזוג — אל תדרוס ארוחות היום שכבר נטענו
       const today=todayKey();
+      // שמור את ארוחות היום המקומיות לפני דריסה מ-Firebase
+      // loadAll() כבר ביצע איפוס ליום חדש — שמור את התוצאה
       const localMeals=JSON.parse(JSON.stringify(S.meals));
       const localWater=S.water;
+
       S={...DEFAULT_STATE,...data};
       if(!S.meals)S.meals={breakfast:[],lunch:[],dinner:[],snacks:[]};
       if(!S.historyData)S.historyData={};
       if(!S.calcSaved)S.calcSaved={};
-      // שמור ארוחות היום המקומיות (יותר עדכניות)
-      const localHasData=Object.values(localMeals).flat().length>0;
-      if(localHasData){S.meals=localMeals;S.water=localWater;}
+
+      // תמיד השתמש בארוחות המקומיות — loadAll() כבר החליט
+      // אם יום חדש: localMeals ריק (loadAll איפס), אז S.meals יהיה ריק ✅
+      // אם אותו יום: localMeals = ארוחות היום, עדכני יותר מ-Firebase ✅
+      S.meals=localMeals;
+      S.water=localWater;
+
       KEY=localStorage.getItem('tzkey')||'';
       try{localStorage.setItem(STORAGE_KEY,JSON.stringify(S));}catch{}
       // רענן UI עם נתוני Firebase
@@ -862,21 +868,26 @@ function startRealtimeSync(uid){
       const remote=doc.data();
       if(!remote)return;
 
-      // Bug fix #4: שמור ארוחות היום המקומיות לפני כל דריסה
       const today=todayKey();
+      // שמור רק ארוחות היום — אם localMeals שייך לאתמול, אל תשחזר
       const localMeals=JSON.parse(JSON.stringify(S.meals));
       const localWater=S.water;
+      const localLastDay=localStorage.getItem('tzday_v15');
+      const localIsToday=(localLastDay===today);
 
-      // מיזוג historyData בלי ארוחות היום (שנמצאות ב-S.meals)
       const mergedHistory={...S.historyData,...remote.historyData};
-      delete mergedHistory[today]; // Bug fix #4: אל תגרום לגיבוב עם ארוחות היום
+      delete mergedHistory[today];
 
       S={...DEFAULT_STATE,...remote,historyData:mergedHistory};
       if(!S.meals)S.meals={breakfast:[],lunch:[],dinner:[],snacks:[]};
-      // שחזר ארוחות היום המקומיות
-      S.meals=localMeals;
-      S.water=localWater;
-      KEY=localStorage.getItem('tzkey')||KEY; // Bug fix #2: שמור מפתח
+
+      // שחזר ארוחות מקומיות רק אם הן של היום
+      if(localIsToday){
+        S.meals=localMeals;
+        S.water=localWater;
+      }
+      // אחרת: יום חדש — S.meals נשאר ריק ✅
+      KEY=localStorage.getItem('tzkey')||KEY;
       try{localStorage.setItem(STORAGE_KEY,JSON.stringify(S));}catch{}
       uhome();rfood();rsettings();
       showSyncStatus('🔄 עודכן ממכשיר אחר');
